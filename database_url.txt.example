@@ -1,0 +1,5 @@
+# To share one database with the team, copy this file to database_url.txt
+# and put your PostgreSQL address on the line below (remove the #).
+# Without database_url.txt, Almo keeps its data on this computer (~/.almo/almo.db).
+#
+# postgresql://almo:PASSWORD@outreach.uprankd.com:5432/almo

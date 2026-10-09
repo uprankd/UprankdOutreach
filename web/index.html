@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en-GB" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Almo · Uprankd Outreach</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23131417'/%3E%3Cpath d='M9 8v9a7 7 0 0 0 14 0V8' stroke='%2305b3f2' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Funnel+Sans:wght@300..800&display=swap">
+<script>(function(){try{var v=localStorage.getItem('almo-theme');if(v)document.documentElement.setAttribute('data-theme',v);if(localStorage.getItem('almo-rail')==='collapsed')document.documentElement.setAttribute('data-rail','collapsed');}catch(e){}})();</script>
+<link rel="stylesheet" href="/web/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail-head">
+      <a class="logo" href="#/overview" id="logo" aria-label="Uprankd"></a>
+      <button class="rail-toggle" id="railToggle" title="Hide navigation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m10 4-4 4 4 4"/></svg></button>
+    </div>
+    <div class="grp">
+      <div class="grp-head"><span class="label">Campaign</span><button class="client-add" id="addCampaign" title="New campaign">+</button></div>
+      <div class="menu" id="campMenu">
+        <button id="campBtn"><span class="client-mark" id="campMark">G</span><span class="cname" id="campName">All campaigns</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg></button>
+        <div class="menu-list" id="campList"></div>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="label">Outreach</div>
+      <nav class="nav" id="nav1"></nav>
+    </div>
+    <div class="grp">
+      <div class="label">Setup</div>
+      <nav class="nav" id="nav2"></nav>
+    </div>
+    <div class="rfoot">
+      <span class="avatar" id="avatar">U</span>
+      <div class="who"><b id="whoName">Uprankd</b><span>Almo · on this computer</span></div>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-heading"><h1 class="pagetitle" id="title">Overview</h1><div class="pagesub" id="subtitle"></div></div>
+      <button class="runchip" id="runchip" title="Pause or resume the automation"><span class="dot" id="runDot"></span><span id="runText">…</span></button>
+      <select class="ctl" id="range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option></select>
+      <a class="ctl" id="exportBtn" href="/api/export"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0 3-3m-3 3L5 7M3 12v2h10v-2"/></svg>Export</a>
+      <button class="ctl ctl--icon" id="themeBtn" title="Switch theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"/></svg></button>
+      <button class="ctl ctl--primary" id="addBtn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>Add websites</button>
+    </header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true"></aside>
+
+<div class="modal" id="addModal" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+  <div class="modal-head"><h2 class="sec" id="addTitle">Add websites</h2><div class="pagesub">Paste them, or drop a CSV or Excel file.</div></div>
+  <div class="modal-body">
+    <div class="drop" id="drop">
+      <div class="fld"><textarea id="siteText" placeholder="delfi.lv&#10;https://www.tvnet.lv&#10;nra.lv, jauns.lv"></textarea></div>
+      <div class="dropnote"><span id="parseNote">Any format works.</span><label>Choose file…<input type="file" id="fileIn" accept=".csv,.txt,.xlsx,.xlsm" hidden></label></div>
+    </div>
+    <div class="fld" style="margin-top:16px"><span class="label">Campaign</span><select id="addCamp"></select></div>
+  </div>
+  <div class="modal-foot"><span class="grow" id="addInfo"></span><button class="ctl" data-close>Cancel</button><button class="ctl ctl--primary" id="addGo" disabled>Start</button></div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/web/app.js"></script>
+</body>
+</html>
