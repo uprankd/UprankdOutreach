@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en-GB" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sign in · Uprankd Outreach</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23131417'/%3E%3Cpath d='M9 8v9a7 7 0 0 0 14 0V8' stroke='%2305b3f2' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Funnel+Sans:wght@300..800&display=swap">
+<script>(function(){try{var v=localStorage.getItem('almo-theme');if(v)document.documentElement.setAttribute('data-theme',v);}catch(e){}})();</script>
+<link rel="stylesheet" href="/web/app.css">
+<style>
+.login-shell{min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--wash)}
+.login-panel{width:100%;display:grid;place-items:center}
+.login-inner{width:min(380px,100%);text-align:center}
+.login-logo{display:inline-block;margin-bottom:52px}
+.login-logo svg{display:block;width:auto;height:27px}
+.login-content{display:flex;flex-direction:column;gap:24px}
+.login-content h1{margin:0;color:var(--ink);font-size:28px;font-weight:700;line-height:1.15;letter-spacing:-.035em}
+.login-lede{margin:11px auto 0;max-width:34ch;color:var(--ink-3);font-size:14px;line-height:1.6}
+.google-login{width:100%;min-height:46px;display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:0 18px;color:#060b70;background:#fff;border:1px solid rgba(6,11,112,.14);border-radius:var(--r);font:inherit;font-size:14px;font-weight:600;letter-spacing:-.01em;cursor:pointer;text-decoration:none;box-shadow:0 10px 30px -24px rgba(6,11,112,.55);transition:transform .12s var(--out),border-color .14s ease,box-shadow .14s ease}
+.google-login:hover{border-color:rgba(6,11,112,.28);box-shadow:0 14px 32px -22px rgba(6,11,112,.5)}
+.google-login:active{transform:translateY(1px)}
+.google-login svg{flex:none}
+.login-error{padding:11px 13px;color:var(--bad);background:color-mix(in srgb,var(--bad) 7%,var(--paper));border:1px solid color-mix(in srgb,var(--bad) 20%,transparent);border-radius:8px;font-size:var(--t-small);line-height:1.5}
+.login-note{padding:11px 13px;color:var(--ink-2);background:var(--wash-2);border:1px solid var(--rule);border-radius:8px;font-size:var(--t-small);line-height:1.5}
+.login-trust{margin:-8px 0 0;color:var(--ink-4);font-size:var(--t-small);line-height:1.6}
+@media (max-width:640px){.login-shell{padding:20px}.login-logo{margin-bottom:42px}.login-content h1{font-size:25px}}
+</style>
+</head>
+<body>
+<main class="login-shell"><section class="login-panel"><div class="login-inner">
+<span class="login-logo"><svg viewBox="0 0 161 28" fill="none" role="img" aria-label="Uprankd"><g clip-path="url(#uplogo)"><path d="M64.2815 21.1095V26.3068H62.6512C58.754 26.3068 55.9894 24.7762 54.3252 21.7507L51.9873 17.9071H50.0742V26.3068H44.5823V1.74728H55.4595C60.3132 1.74728 63.9632 5.27109 63.9632 9.97007C63.9632 13.6367 61.6608 16.5194 58.2935 17.516L59.5683 19.2949C60.4182 20.4701 61.6591 21.1095 63.2539 21.1095H64.2815ZM50.0725 13.101H55.3512C57.0526 13.101 58.3274 11.7847 58.3274 10.0398C58.3274 8.2949 57.0526 6.94286 55.3512 6.94286H50.0725V13.101Z" fill="var(--logo-word)"></path><path d="M82.6687 22.0007H72.748L71.2243 26.3068H65.343L74.5188 1.74728H81.0028L90.2159 26.3068H84.1924L82.6687 22.0007ZM80.8962 16.9106L77.7067 7.83402L74.5171 16.9106H80.8945H80.8962Z" fill="var(--logo-word)"></path><path d="M113.162 1.74728V26.3068H107.599L97.4651 11.2864V26.3068H91.9731V1.74728H97.5006L107.67 16.7677V1.74728H113.162Z" fill="var(--logo-word)"></path><path d="M136.598 21.1095V26.3068H134.932C131.282 26.3068 128.59 24.9191 126.889 22.1776L123.665 17.55L121.432 20.2915V26.3068H115.94V1.74728H121.432V12.1401L129.758 1.74728H136.456L127.314 13.0296L131.6 18.902C132.628 20.3612 133.938 21.1095 135.533 21.1095H136.596H136.598Z" fill="var(--logo-word)"></path><path d="M160.863 14.0262C160.863 21.0381 155.513 26.3068 148.391 26.3068H138.753V1.74728H148.391C155.513 1.74728 160.863 7.01429 160.863 14.0262ZM155.229 14.0262C155.229 10.0041 152.253 6.94286 148.249 6.94286H144.245V21.1095H148.249C152.253 21.1095 155.229 18.0483 155.229 14.0262Z" fill="var(--logo-word)"></path><path d="M14.9166 16.6486C14.9166 19.2354 12.8681 21.3884 10.2932 21.4293C7.51841 21.4735 5.49195 19.431 5.49195 16.6963V1.74728H0V16.7677C0 22.4616 4.39322 26.7337 10.2051 26.7337C16.017 26.7337 20.4086 22.4616 20.4086 16.7677V15.9922C20.4086 14.4939 19.1998 13.2796 17.7083 13.2796H14.9166V16.6486ZM14.9166 1.74728V11.7847H17.7083C19.1998 11.7847 20.4086 10.5704 20.4086 9.07211V1.74728H14.9166Z" fill="var(--logo-mark)"></path><path d="M33.1717 1.74728H22.0117V9.07211C22.0117 10.5704 23.2205 11.7847 24.712 11.7847H27.5037V6.94286H33.0312C34.8105 6.94286 36.1259 8.30851 36.114 10.135C36.1022 11.9616 34.6479 13.2796 32.9076 13.2796H24.712C23.2205 13.2796 22.0117 14.4939 22.0117 15.9922V26.3068H27.5037V18.4752H33.1717C38.0626 18.4752 41.7465 14.8799 41.7465 10.1112C41.7465 5.34252 38.0626 1.74728 33.1717 1.74728Z" fill="var(--logo-mark)"></path></g><defs><clipPath id="uplogo"><rect width="161" height="25" fill="white" transform="translate(0 1.74728)"></rect></clipPath></defs></svg>
+</span>
+<div class="login-content">
+<div><h1>Outreach</h1><p class="login-lede">Sign in to find publishers, send pitches and collect prices.</p></div>
+%(message)s
+<a class="google-login" href="/auth/google%(next)s"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M22.5 12.2c0-.8-.1-1.4-.2-2H12v3.9h5.9c-.1 1-.8 2.5-2.3 3.5l3.6 2.8c2.1-2 3.3-4.9 3.3-8.2Z"></path><path fill="#34A853" d="M12 23c2.9 0 5.3-1 7.1-2.6l-3.5-2.7c-.9.6-2.1 1-3.6 1-2.8 0-5.2-1.9-6.1-4.4L2.3 17c1.8 3.6 5.5 6 9.7 6Z"></path><path fill="#FBBC05" d="M5.9 14.3a6.8 6.8 0 0 1 0-4.6L2.3 7A11 11 0 0 0 1 12c0 1.8.4 3.5 1.3 5l3.6-2.7Z"></path><path fill="#EA4335" d="M12 5.4c2 0 3.3.9 4.1 1.6l3.1-3C17.3 2.2 14.9 1 12 1 7.8 1 4.1 3.4 2.3 7l3.6 2.8C6.8 7.3 9.2 5.4 12 5.4Z"></path></svg> Continue with Google</a>
+<p class="login-trust">Use your @%(domain)s Google account.</p>
+</div>
+</div></section></main>
+</body>
+</html>

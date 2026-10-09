@@ -9,7 +9,7 @@ Ir divi veidi, un tos var apvienot:
 | **A. Kopīga datubāze** | Uz servera ir tikai PostgreSQL. Katrs komandas biedrs palaiž Almo savā datorā, un visi lieto vienu datubāzi. | Katrs sūta no sava e-pasta. |
 | **B. Almo kā mājaslapa** | Almo darbojas uz servera, un to atver pārlūkā `https://outreach.uprankd.com`. | Vienam kopīgam outreach e-pastam, un nevienam nekas nav jāinstalē. |
 
-> **Svarīgi par drošību.** Almo pašam nav pieteikšanās (login). Ja to liec internetā (B variants), lapai **obligāti** jāpieliek parole vai IP ierobežojums (5. solis). Citādi jebkurš varēs sūtīt e-pastus tavā vārdā.
+> **Drošība.** B variantā Almo atveras tikai pēc pieteikšanās ar @uprankd.com Google kontu (5. solis). Kamēr tas nav iestatīts, Almo uz servera neatveras vispār.
 
 ---
 
@@ -130,17 +130,19 @@ RunCloud panelī: **Server → Supervisor → Create Job**.
 Additional config:
 
 ```
-environment=ALMO_NO_BROWSER="1",ALMO_PORT="8765",ALMO_DATA_DIR="/home/runcloud/almo-data"
+environment=ALMO_SERVER="1",ALMO_NO_BROWSER="1",ALMO_PORT="8765",ALMO_DATA_DIR="/home/runcloud/almo-data"
 stopasgroup=true
 killasgroup=true
 ```
 
 Ja RunCloud prasa **Vendor Binary**, izvēlies variantu bez binary vai `none`. Python atrodas pašā Command rindā.
 
-Pārbaude caur SSH:
+`ALMO_SERVER="1"` nozīmē, ka Almo bez Google pieteikšanās (5. solis) neatvērsies nevienam.
+
+Pārbaude caur SSH (pirms 5. soļa tam jāatbild 403, pēc tam 401):
 
 ```bash
-curl -s http://127.0.0.1:8765/api/settings | head -c 200
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/api/settings
 ```
 
 > Ja Supervisor forma Python komandu nepieņem, tas pats strādā ar systemd. Skat. pielikumu A.
@@ -171,32 +173,61 @@ curl -s http://127.0.0.1:8765/api/settings | head -c 200
 
 ---
 
-## 5. Parole lapai (B, obligāti)
+## 5. Pieteikšanās ar Google (B, obligāti)
 
-Izveido paroles failu caur SSH (kā root). Katram cilvēkam savs lietotājs:
+Almo ir pieteikšanās lapa kā reports.uprankd.com: **Continue with Google**. Iekšā tiek tikai **@uprankd.com** Google konti. Gmail un citu uzņēmumu konti tiek atraidīti.
+
+Kamēr pieteikšanās nav iestatīta, Almo uz servera **neatveras vispār**. Tas atbild "Sign-in isn't set up", tāpēc nejauši atstāt to vaļā nevar.
+
+### 5.1 Google OAuth klients (vienreiz, ~5 min)
+
+To dara kāds ar uprankd.com Google Workspace admin vai Google Cloud piekļuvi:
+
+1. Atver [console.cloud.google.com](https://console.cloud.google.com/), izveido projektu, piemēram `Uprankd Outreach`.
+2. **APIs & Services → OAuth consent screen** (vai **Google Auth Platform → Branding / Audience**):
+   - App name: `Uprankd Outreach`
+   - User type / Audience: **Internal**. Tad Google pats ielaiž tikai uprankd.com kontus.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+   - Application type: **Web application**
+   - Name: `Almo`
+   - Authorized redirect URIs: `https://outreach.uprankd.com/auth/callback`
+4. Spied **Create**, tad **Download JSON**.
+
+### 5.2 Uzliec to uz servera
+
+Lejupielādēto failu augšupielādē Almo mapē ar nosaukumu `google_oauth.json` (piem., ar SFTP kā `runcloud` lietotājs):
 
 ```bash
-apt install -y apache2-utils
-htpasswd -c /etc/nginx-rc/almo.htpasswd kristians     # -c tikai pirmajam
-htpasswd    /etc/nginx-rc/almo.htpasswd ieva
-chmod 640 /etc/nginx-rc/almo.htpasswd
+cd /home/runcloud/apps/almo
+# augšupielādē failu šeit kā google_oauth.json, tad:
+chmod 600 google_oauth.json
+supervisorctl restart almo        # vai Supervisor → almo → Restart
 ```
 
-4. soļa `location /` blokā pievieno:
+Atver `https://outreach.uprankd.com`. Jāparādās pieteikšanās lapai.
 
-```nginx
-    auth_basic "Almo";
-    auth_basic_user_file /etc/nginx-rc/almo.htpasswd;
+- Fails satur slepenu atslēgu. Tas ir `.gitignore` sarakstā, un to nedrīkst likt GitHub vai sūtīt čatā.
+- Sesija ilgst 30 dienas. **Sign out** ir apakšā kreisajā pusē.
+- Pieteikšanās strādā tikai caur **HTTPS** (4. solis), jo sesijas sīkdatne ir drošā režīmā.
+
+### 5.3 Ja jāierobežo konkrētiem cilvēkiem (nav obligāti)
+
+Pēc noklusējuma iekšā tiek visi @uprankd.com. Lai ielaistu tikai dažus, Supervisor darba **Additional config** `environment=` rindai pievieno:
+
+```
+ALMO_ALLOWED_EMAILS="kristians@uprankd.com,ieva@uprankd.com"
 ```
 
-Vēl drošāk ir atļaut tikai biroja IP:
+Pēc restartēšanas izņemtais cilvēks tiek izlogots uzreiz.
+
+### 5.4 Papildu aizsardzība (nav obligāti)
+
+Ja gribi, lai lapa vispār atveras tikai no biroja, 4. soļa `location /` blokā pievieno:
 
 ```nginx
     allow 203.0.113.10;   # birojs
     deny all;
 ```
-
-Pārbaudi: `https://outreach.uprankd.com` bez paroles nedrīkst atvērties.
 
 > Nelabo `/etc/nginx-rc/conf.d/<app>.conf` un `main.conf` ar roku. RunCloud tos pārraksta. Izmaiņas dari tikai caur **NGiNX Config** paneli.
 
@@ -265,6 +296,9 @@ Ieteicams kopijas reizi nedēļā aizsūtīt arī ārpus servera.
 | Lapa rāda **502 Bad Gateway** | Almo nedarbojas → Supervisor → almo → Logs; restartē. |
 | `Couldn't reach ...` / DB kļūda logā | `systemctl status postgresql`; pareiza parole `database_url.txt`. |
 | Settings → Advanced → Database rāda **SQLite** | `database_url.txt` nav lietotnes mapē, vai tajā ir kļūda. |
+| Lapa saka "Sign-in isn't set up" | `google_oauth.json` nav Almo mapē vai nav restartēts (5.2). |
+| Google rāda `redirect_uri_mismatch` | Google Cloud klientā redirect URI jābūt tieši `https://outreach.uprankd.com/auth/callback`. |
+| Pēc Google pieteikšanās atkal atgriež uz login | Lapa atvērta caur `http://`, nevis `https://` (4. solis, HTTPS redirect). |
 | Imports beidzas ar kļūdu lieliem failiem | Palielini `client_max_body_size` NGINX konfigurācijā. |
 | E-pasti netiek sūtīti | Almo augšā: Paused? Settings → Sending ir **Live**? Overview sarkanie paziņojumi. |
 | Pēc `git pull` nekas nemainījās | Aizmirsts restartēt Supervisor darbu. |
@@ -283,6 +317,7 @@ After=network.target postgresql.service
 [Service]
 User=runcloud
 WorkingDirectory=/home/runcloud/apps/almo
+Environment=ALMO_SERVER=1
 Environment=ALMO_NO_BROWSER=1
 Environment=ALMO_PORT=8765
 Environment=ALMO_DATA_DIR=/home/runcloud/almo-data
@@ -308,7 +343,7 @@ journalctl -u almo -f           # žurnāls
 ```bash
 # atjaunināt
 cd /home/runcloud/apps/almo && git pull && .venv/bin/pip install -r requirements.txt && supervisorctl restart almo
-# vai Almo dzīvs?
+# vai Almo dzīvs? (302 = strādā un prasa pieteikšanos)
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/
 # backup tagad
 sudo -u postgres pg_dump -Fc almo > /var/backups/almo-manual.dump

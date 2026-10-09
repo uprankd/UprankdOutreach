@@ -52,6 +52,7 @@ async function api(path, opts = {}) {
   const r = await fetch(path, init);
   let j = {};
   try { j = await r.json(); } catch (e) {}
+  if (r.status === 401 && j.login) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.hash); throw new Error("Please sign in"); }
   if (!r.ok) throw new Error(j.error || "Something went wrong (" + r.status + ")");
   return j;
 }
@@ -94,8 +95,13 @@ function renderCampaigns() {
     camps.map((c) => '<button data-c="' + c.id + '"' + (S.campaign === c.id ? ' aria-current="true"' : "") + '><span class="client-mark">' + esc(c.name.slice(0, 1).toUpperCase()) + '</span><span class="cname">' + esc(c.name) + '</span><span class="n">' + c.n + "</span></button>").join("");
   $("#addCamp").innerHTML = camps.map((c) => '<option value="' + c.id + '"' + ((S.campaign || camps[0].id) === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>").join("");
   const st = d.settings;
-  $("#whoName").textContent = st.sender_name || "Set your name";
-  $("#avatar").textContent = (st.sender_name || "U").split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  const u = d.user;
+  const nm = u ? u.name : st.sender_name || "Set your name";
+  $("#whoName").textContent = nm;
+  $("#whoSub").textContent = u ? u.email : "Almo · on this computer";
+  const initials = (nm || "U").split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  $("#avatar").innerHTML = u && u.picture ? '<img src="' + esc(u.picture) + '" alt="" referrerpolicy="no-referrer">' : esc(initials);
+  $("#signOut").hidden = !u;
 }
 function renderRunchip() {
   const d = S.data; if (!d) return;

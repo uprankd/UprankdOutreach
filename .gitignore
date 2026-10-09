@@ -5,3 +5,5 @@ __pycache__/
 setup.log
 # Contains the database password - never commit
 database_url.txt
+# Google sign-in secret - never commit
+google_oauth.json

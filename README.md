@@ -38,7 +38,7 @@ By default Almo keeps everything on this computer in SQLite (`~/.almo/almo.db`).
 3. Copy `database_url.txt.example` to `database_url.txt` and put the same address in it.
 4. Restart Almo. **Settings → Advanced → Database** shows which one is in use.
 
-Running on a RunCloud server (shared database and/or Almo as a website): see [docs/RUNCLOUD.md](docs/RUNCLOUD.md).
+Running on a RunCloud server (shared database and/or Almo as a website): see [docs/RUNCLOUD.md](docs/RUNCLOUD.md). On a server Almo asks people to sign in with their @uprankd.com Google account, and it won't open over the network until that's set up.
 
 Several computers can run Almo on the same database. A website is claimed before it is pitched, so it is only ever emailed once. Each person sends from their own mailbox and Almo reads the replies there.
 
@@ -57,6 +57,6 @@ Along the way:
 
 ## For developers
 
-`python3 tests/test_flow.py`, `tests/test_import.py` and `tests/test_ai.py` run the automation, the import and the three AI providers against a fake mailbox and fake AI answers.
+`python3 tests/test_flow.py`, `tests/test_import.py`, `tests/test_ai.py` and `tests/test_auth.py` run the automation, the import, the three AI providers and Google sign-in against fakes - no accounts or network needed.
 
 The same tests run against PostgreSQL when `DATABASE_URL` is set.

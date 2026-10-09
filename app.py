@@ -17,9 +17,16 @@ from datetime import datetime, timedelta
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "engine"))
 
-from flask import Flask, jsonify, request, send_file, send_from_directory  # noqa: E402
+import html as html_mod  # noqa: E402
+import secrets  # noqa: E402
+from urllib.parse import quote  # noqa: E402
+
+from flask import (Flask, jsonify, redirect, request, send_file,  # noqa: E402
+                   send_from_directory, session)
+from werkzeug.middleware.proxy_fix import ProxyFix  # noqa: E402
 
 import ai as ai_mod  # noqa: E402
+import auth  # noqa: E402
 import db  # noqa: E402
 import exporter  # noqa: E402
 import finder  # noqa: E402
@@ -29,6 +36,17 @@ from worker import STATUS, Worker  # noqa: E402
 
 PORT = int(os.environ.get("ALMO_PORT", "8765"))
 app = Flask(__name__, static_folder=None)
+# Behind NGINX on a server: trust its X-Forwarded-* so https and the domain are right.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+app.config.update(
+    SESSION_COOKIE_NAME="almo_session",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=not os.environ.get("ALMO_INSECURE_COOKIES"),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    MAX_CONTENT_LENGTH=50 * 1024 * 1024,
+)
+app.secret_key = auth.secret_key()
 worker = Worker()
 
 FILTERS = {
@@ -51,6 +69,132 @@ def _campaign_arg():
 
 
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Sign-in
+# --------------------------------------------------------------------------- #
+OPEN_PATHS = {"/login", "/auth/google", "/auth/callback", "/logout", "/web/app.css", "/web/logo.svg"}
+LOGIN_ERRORS = {
+    "domain": "{email} isn't an Uprankd account. Sign in with your @{domain} Google account.",
+    "person": "{email} doesn't have access to Outreach yet. Ask the admin to add you.",
+    "cancelled": "Sign-in was cancelled.",
+    "expired": "That sign-in took too long. Please try again.",
+    "failed": "Google sign-in didn't work. Please try again.",
+}
+
+
+PROXY_HEADERS = ("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP",
+                 "Forwarded", "Via")
+
+
+def _local_request():
+    """Straight from this computer, not through a proxy or the network.
+    ALMO_SERVER=1 (set on servers) means never trust that."""
+    if os.environ.get("ALMO_SERVER"):
+        return False
+    return request.remote_addr in ("127.0.0.1", "::1") and \
+        not any(request.headers.get(h) for h in PROXY_HEADERS) and \
+        request.host.split(":")[0] in ("127.0.0.1", "localhost", "[::1]")
+
+
+@app.before_request
+def guard():
+    if request.path in OPEN_PATHS:
+        return None
+    cfg = auth.config()
+    if cfg is None:
+        if _local_request():
+            return None                 # a Mac running Almo for one person
+        msg = ("Sign-in isn't set up, so Almo won't open over the network. "
+               "Add google_oauth.json - see docs/RUNCLOUD.md.")
+        if request.path.startswith("/api/"):
+            return jsonify({"error": msg}), 403
+        return msg, 403
+    user = session.get("user")
+    if user and auth.allowed(cfg, user):
+        return None
+    session.pop("user", None)
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Please sign in again", "login": True}), 401
+    nxt = request.full_path.rstrip("?")
+    return redirect("/login" + ("?next=" + quote(nxt) if nxt not in ("/", "") else ""))
+
+
+def _safe_next(value):
+    value = value or "/"
+    return value if value.startswith("/") and not value.startswith("//") else "/"
+
+
+def _redirect_uri():
+    base = os.environ.get("ALMO_PUBLIC_URL", "").rstrip("/") or request.host_url.rstrip("/")
+    return base + "/auth/callback"
+
+
+@app.get("/login")
+def login():
+    cfg = auth.config()
+    if cfg is None:
+        return redirect("/")
+    if session.get("user") and auth.allowed(cfg, session["user"]):
+        return redirect(_safe_next(request.args.get("next")))
+    code = request.args.get("error", "")
+    message = ""
+    if code in LOGIN_ERRORS:
+        text = LOGIN_ERRORS[code].format(email=request.args.get("email") or "That account",
+                                         domain=cfg["domain"])
+        message = '<div class="login-error" role="alert">%s</div>' % html_mod.escape(text)
+    elif request.args.get("signed_out"):
+        message = '<div class="login-note">You\'re signed out.</div>'
+    nxt = request.args.get("next")
+    page = open(os.path.join(HERE, "web", "login.html"), encoding="utf-8").read()
+    page = (page.replace("%(message)s", message)
+                .replace("%(next)s", ("?next=" + quote(_safe_next(nxt))) if nxt else "")
+                .replace("%(domain)s", html_mod.escape(cfg["domain"])))
+    return page, 200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}
+
+
+@app.get("/auth/google")
+def auth_google():
+    cfg = auth.config()
+    if cfg is None:
+        return redirect("/")
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    session["oauth"] = {"state": state, "nonce": nonce, "next": _safe_next(request.args.get("next")),
+                        "ts": time.time()}
+    return redirect(auth.authorize_url(cfg, _redirect_uri(), state, nonce))
+
+
+@app.get("/auth/callback")
+def auth_callback():
+    cfg = auth.config()
+    if cfg is None:
+        return redirect("/")
+    pending = session.pop("oauth", None) or {}
+    if request.args.get("error"):
+        return redirect("/login?error=cancelled")
+    if not pending or request.args.get("state") != pending.get("state") \
+            or time.time() - pending.get("ts", 0) > 600:
+        return redirect("/login?error=expired")
+    try:
+        claims = auth.exchange(cfg, request.args.get("code", ""), _redirect_uri())
+        user = auth.check(cfg, claims, pending.get("nonce"))
+    except auth.AuthError as exc:
+        q = "/login?error=" + exc.code
+        if exc.email:
+            q += "&email=" + quote(exc.email)
+        return redirect(q)
+    session.clear()
+    session["user"] = user
+    session.permanent = True
+    db.log("info", "%s signed in" % user["email"])
+    return redirect(pending.get("next") or "/")
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect("/login?signed_out=1" if auth.config() else "/")
+
+
 @app.get("/")
 def index():
     return send_from_directory(os.path.join(HERE, "web"), "index.html")
@@ -145,6 +289,7 @@ def state():
         "campaigns": db.query("SELECT c.*, (SELECT COUNT(*) FROM sites s WHERE s.campaign_id=c.id) AS n "
                               "FROM campaigns c ORDER BY c.id"),
         "settings": settings.public(), "missing": missing, "setup": setup,
+        "user": session.get("user") if auth.config() else None,
         "worker": worker.status(cfg),
         "attention": total("status IN ('needs_you','replied','error')"),
         "days": days,
