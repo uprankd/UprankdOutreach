@@ -38,6 +38,8 @@ By default Almo keeps everything on this computer in SQLite (`~/.almo/almo.db`).
 3. Copy `database_url.txt.example` to `database_url.txt` and put the same address in it.
 4. Restart Almo. **Settings → Advanced → Database** shows which one is in use.
 
+Running on a RunCloud server (shared database and/or Almo as a website): see [docs/RUNCLOUD.md](docs/RUNCLOUD.md).
+
 Several computers can run Almo on the same database. A website is claimed before it is pitched, so it is only ever emailed once. Each person sends from their own mailbox and Almo reads the replies there.
 
 ## What happens to each website
