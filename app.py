@@ -17,6 +17,10 @@ from datetime import datetime, timedelta
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "engine"))
 
+import envfile  # noqa: E402
+
+envfile.load(HERE)          # before anything reads its settings
+
 import html as html_mod  # noqa: E402
 import secrets  # noqa: E402
 from urllib.parse import quote  # noqa: E402

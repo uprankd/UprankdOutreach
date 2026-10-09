@@ -69,7 +69,7 @@ Ja komandas biedri pieslēdzas no saviem datoriem, PostgreSQL jāklausās arī �
 3. `systemctl restart postgresql`
 4. RunCloud panelī: **Server → Security (Firewall)** → atver portu **5432** tikai tiem pašiem IP.
 
-Katrs komandas biedrs savā Almo mapē izveido `database_url.txt`:
+Katrs komandas biedrs savā Almo mapē (savā datorā) izveido `database_url.txt`:
 
 ```
 postgresql://almo:PAROLE@outreach.uprankd.com:5432/almo?sslmode=require
@@ -96,12 +96,32 @@ python3 -m venv .venv
 
 Repozitorijs ir privāts, tāpēc `git clone` paprasīs GitHub lietotāju un **personal access token** (nevis paroli). Vai arī: GitHub repo → **Settings → Deploy keys** → pievieno servera SSH atslēgu (read-only) un klonē ar `git@github.com:uprankd/UprankdOutreach.git`.
 
-Pieslēdz datubāzi:
+### Iestatījumi: `.env`
+
+Visi servera iestatījumi ir vienā failā `.env` Almo mapē. Paraugs ir `.env.example`:
 
 ```bash
-echo 'postgresql://almo:NOMAINI-SO-PAROLI@127.0.0.1:5432/almo' > database_url.txt
-chmod 600 database_url.txt
+cp .env.example .env
+chmod 600 .env
+nano .env
 ```
+
+| Mainīgais | Ko ierakstīt | Obligāts |
+| --- | --- | --- |
+| `ALMO_SERVER` | `1`. Bez Google pieteikšanās Almo neatveras nevienam. | jā |
+| `ALMO_GOOGLE_CLIENT_ID` | Client ID no Google Cloud (5. solis) | jā |
+| `ALMO_GOOGLE_CLIENT_SECRET` | Client secret no Google Cloud (5. solis) | jā |
+| `ALMO_ALLOWED_DOMAIN` | `uprankd.com` | — (noklusējums `uprankd.com`) |
+| `ALMO_ALLOWED_EMAILS` | Tukšs = visi @uprankd.com. Vai saraksts: `a@uprankd.com,b@uprankd.com` | nē |
+| `DATABASE_URL` | `postgresql://almo:PAROLE@127.0.0.1:5432/almo` (1. solis) | jā (citādi SQLite) |
+| `ALMO_DATA_DIR` | `/home/runcloud/almo-data` | ieteicams |
+| `ALMO_PUBLIC_URL` | `https://outreach.uprankd.com` | ieteicams |
+| `ALMO_PORT` | `8765`. Tam jāsakrīt ar NGINX `proxy_pass` (4. solis). | — |
+| `ALMO_NO_BROWSER` | `1` | jā |
+
+- `.env` ir `.gitignore` sarakstā, un to nedrīkst likt GitHub vai sūtīt čatā.
+- Pēc katras `.env` izmaiņas restartē Almo (6. solis).
+- E-pasta parole un AI atslēga **nav** `.env` failā. Tās ievada pašā Almo, Settings lapā.
 
 Ja kādreiz vajag pārnest datus no kāda datora Almo (SQLite), to dara **tajā datorā**:
 
@@ -125,19 +145,11 @@ RunCloud panelī: **Server → Supervisor → Create Job**.
 | Command | `/home/runcloud/apps/almo/.venv/bin/python app.py` |
 | Auto start / Auto restart | ieslēgts |
 | Processes | **1** (Almo jādarbojas tieši vienā eksemplārā) |
-| Additional config | skat. zemāk |
+| Additional config | `stopasgroup=true` un `killasgroup=true` (katrs savā rindā) |
 
-Additional config:
-
-```
-environment=ALMO_SERVER="1",ALMO_NO_BROWSER="1",ALMO_PORT="8765",ALMO_DATA_DIR="/home/runcloud/almo-data"
-stopasgroup=true
-killasgroup=true
-```
+Iestatījumus Almo nolasa no `.env` (2. solis), tāpēc šeit tie nav jāatkārto.
 
 Ja RunCloud prasa **Vendor Binary**, izvēlies variantu bez binary vai `none`. Python atrodas pašā Command rindā.
-
-`ALMO_SERVER="1"` nozīmē, ka Almo bez Google pieteikšanās (5. solis) neatvērsies nevienam.
 
 Pārbaude caur SSH (pirms 5. soļa tam jāatbild 403, pēc tam 401):
 
@@ -195,27 +207,29 @@ To dara kāds ar uprankd.com Google Workspace admin vai Google Cloud piekļuvi:
 
 ### 5.2 Uzliec to uz servera
 
-Lejupielādēto failu augšupielādē Almo mapē ar nosaukumu `google_oauth.json` (piem., ar SFTP kā `runcloud` lietotājs):
+No Google Cloud nokopē **Client ID** un **Client secret** uz `.env`:
 
-```bash
-cd /home/runcloud/apps/almo
-# augšupielādē failu šeit kā google_oauth.json, tad:
-chmod 600 google_oauth.json
-supervisorctl restart almo        # vai Supervisor → almo → Restart
 ```
+ALMO_GOOGLE_CLIENT_ID=1234567890-xxxxxxxx.apps.googleusercontent.com
+ALMO_GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxx
+```
+
+Tad restartē Almo: `supervisorctl restart almo` vai Supervisor → almo → Restart.
+
+Vari arī lejupielādēto JSON failu ielikt Almo mapē kā `google_oauth.json` (`chmod 600`). Ja abi ir iestatīti, uzvar `.env`.
 
 Atver `https://outreach.uprankd.com`. Jāparādās pieteikšanās lapai.
 
-- Fails satur slepenu atslēgu. Tas ir `.gitignore` sarakstā, un to nedrīkst likt GitHub vai sūtīt čatā.
+- Client secret ir slepens. Nesūti to čatā un neliec GitHub.
 - Sesija ilgst 30 dienas. **Sign out** ir apakšā kreisajā pusē.
 - Pieteikšanās strādā tikai caur **HTTPS** (4. solis), jo sesijas sīkdatne ir drošā režīmā.
 
 ### 5.3 Ja jāierobežo konkrētiem cilvēkiem (nav obligāti)
 
-Pēc noklusējuma iekšā tiek visi @uprankd.com. Lai ielaistu tikai dažus, Supervisor darba **Additional config** `environment=` rindai pievieno:
+Pēc noklusējuma iekšā tiek visi @uprankd.com. Lai ielaistu tikai dažus, `.env` failā ieraksti:
 
 ```
-ALMO_ALLOWED_EMAILS="kristians@uprankd.com,ieva@uprankd.com"
+ALMO_ALLOWED_EMAILS=kristians@uprankd.com,ieva@uprankd.com
 ```
 
 Pēc restartēšanas izņemtais cilvēks tiek izlogots uzreiz.
@@ -294,9 +308,9 @@ Ieteicams kopijas reizi nedēļā aizsūtīt arī ārpus servera.
 | Pazīme | Ko pārbaudīt |
 | --- | --- |
 | Lapa rāda **502 Bad Gateway** | Almo nedarbojas → Supervisor → almo → Logs; restartē. |
-| `Couldn't reach ...` / DB kļūda logā | `systemctl status postgresql`; pareiza parole `database_url.txt`. |
-| Settings → Advanced → Database rāda **SQLite** | `database_url.txt` nav lietotnes mapē, vai tajā ir kļūda. |
-| Lapa saka "Sign-in isn't set up" | `google_oauth.json` nav Almo mapē vai nav restartēts (5.2). |
+| `Couldn't reach ...` / DB kļūda logā | `systemctl status postgresql`; pareiza parole `.env` → `DATABASE_URL`. |
+| Settings → Advanced → Database rāda **SQLite** | `.env` nav Almo mapē, `DATABASE_URL` tukšs vai kļūdains. |
+| Lapa saka "Sign-in isn't set up" | `.env` nav `ALMO_GOOGLE_CLIENT_ID` / `SECRET`, vai Almo nav restartēts (5.2). |
 | Google rāda `redirect_uri_mismatch` | Google Cloud klientā redirect URI jābūt tieši `https://outreach.uprankd.com/auth/callback`. |
 | Pēc Google pieteikšanās atkal atgriež uz login | Lapa atvērta caur `http://`, nevis `https://` (4. solis, HTTPS redirect). |
 | Imports beidzas ar kļūdu lieliem failiem | Palielini `client_max_body_size` NGINX konfigurācijā. |
@@ -317,10 +331,7 @@ After=network.target postgresql.service
 [Service]
 User=runcloud
 WorkingDirectory=/home/runcloud/apps/almo
-Environment=ALMO_SERVER=1
-Environment=ALMO_NO_BROWSER=1
-Environment=ALMO_PORT=8765
-Environment=ALMO_DATA_DIR=/home/runcloud/almo-data
+# settings come from /home/runcloud/apps/almo/.env
 ExecStart=/home/runcloud/apps/almo/.venv/bin/python app.py
 Restart=always
 RestartSec=5
