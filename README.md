@@ -11,7 +11,7 @@ If macOS says it can't be opened: right-click the file → **Open** → **Open**
 ## First time
 
 1. **Settings → Email**: Gmail or Fastmail address and an app password, then *Save and test*.
-2. **Settings → AI**: Anthropic API key, then *Save and test*.
+2. **Settings → AI**: pick Claude, OpenAI or Gemini, paste that API key, then *Save and test*.
 3. **Pitch email**: check the text.
 4. **Add websites**.
 5. **Settings → Sending → Test**: every email goes to you. Reply to one with some prices to see the whole loop. Then switch to **Live**.
@@ -20,7 +20,7 @@ Almo only works while the window is open. Your data stays in `~/.almo`. Password
 
 ## Database
 
-**Database** holds every website you know, with prices and terms. Use **Import** to bring in your existing Excel or CSV file. Every sheet is read, and columns are found by their names, in English or Latvian.
+**Database → All websites** always shows every website, whichever campaign is selected. It holds every website you know, with prices and terms. Use **Import** to bring in your existing Excel or CSV file. Every sheet is read, and columns are found by their names, in English or Latvian.
 
 Importing never overwrites what Almo collected. It only fills in fields that are empty.
 
@@ -55,6 +55,6 @@ Along the way:
 
 ## For developers
 
-`python3 tests/test_flow.py` and `python3 tests/test_import.py` run the automation and the import against a fake mailbox and a fake Claude.
+`python3 tests/test_flow.py`, `tests/test_import.py` and `tests/test_ai.py` run the automation, the import and the three AI providers against a fake mailbox and fake AI answers.
 
 The same tests run against PostgreSQL when `DATABASE_URL` is set.

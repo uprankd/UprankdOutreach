@@ -1,8 +1,11 @@
-"""Claude calls. Every answer comes back through a forced tool call, so it is
-always valid JSON - no free text, no hidden <analysis> leaking into emails."""
+"""AI calls - Claude, OpenAI or Gemini, whichever has a key in Settings.
+
+Every answer comes back as JSON matching a schema, so there is no free text and
+nothing like a hidden <analysis> can leak into an email."""
 
 import hashlib
 import json
+import time
 
 import db
 
@@ -29,34 +32,132 @@ def is_unknown(value):
     return str(value or "").strip().lower() in UNKNOWN
 
 
-class AI:
-    def __init__(self, api_key, model_smart, model_fast):
-        if not api_key:
-            raise AIError("No Anthropic API key")
-        from anthropic import Anthropic
+PROVIDERS = {
+    "anthropic": {"name": "Claude", "key": "anthropic_key"},
+    "openai": {"name": "OpenAI", "key": "openai_key"},
+    "gemini": {"name": "Gemini", "key": "gemini_key"},
+}
 
-        self.client = Anthropic(api_key=api_key, max_retries=3, timeout=90)
+
+def make(cfg):
+    """The AI for the provider chosen in Settings, or None without a key."""
+    provider = cfg.get("ai_provider") or "anthropic"
+    if provider not in PROVIDERS:
+        provider = "anthropic"
+    key = cfg.get(PROVIDERS[provider]["key"])
+    if not key:
+        return None
+    return AI(provider, key, cfg.get(provider + "_smart") or cfg.get("model_smart"),
+              cfg.get(provider + "_fast") or cfg.get("model_fast"))
+
+
+def _strict(schema):
+    """OpenAI strict mode: every object closed, every property required."""
+    schema = dict(schema)
+    if schema.get("type") == "object":
+        props = {k: _strict(v) for k, v in schema.get("properties", {}).items()}
+        schema.update(properties=props, required=list(props), additionalProperties=False)
+    return schema
+
+
+def _openapi(schema):
+    """Gemini's older responseSchema dialect: upper-case types, no extras."""
+    out = {"type": schema.get("type", "string").upper()}
+    for key in ("description", "enum"):
+        if key in schema:
+            out[key] = schema[key]
+    if schema.get("type") == "object":
+        out["properties"] = {k: _openapi(v) for k, v in schema.get("properties", {}).items()}
+        out["required"] = list(schema.get("required") or out["properties"])
+    return out
+
+
+class AI:
+    """One interface over Claude, OpenAI and Gemini. Every answer is JSON that
+    matches a schema - no free text, nothing leaking into emails."""
+
+    def __init__(self, provider, api_key, model_smart, model_fast):
+        if not api_key:
+            raise AIError("No API key for %s" % PROVIDERS.get(provider, {}).get("name", provider))
+        self.provider = provider
+        self.key = api_key.strip()
         self.smart = model_smart
         self.fast = model_fast
+        self.client = None
+        if provider == "anthropic":
+            from anthropic import Anthropic
+
+            self.client = Anthropic(api_key=self.key, max_retries=3, timeout=90)
 
     def _call(self, model, system, user, name, schema, max_tokens=1200):
         try:
-            resp = self.client.messages.create(
-                model=model, max_tokens=max_tokens, system=system,
-                messages=[{"role": "user", "content": user}],
-                tools=[{"name": name, "description": "Return the result.",
-                        "input_schema": schema}],
-                tool_choice={"type": "tool", "name": name},
-            )
+            if self.provider == "openai":
+                return self._openai(model, system, user, name, schema, max_tokens)
+            if self.provider == "gemini":
+                return self._gemini(model, system, user, schema, max_tokens)
+            return self._claude(model, system, user, name, schema, max_tokens)
+        except AIError:
+            raise
         except Exception as exc:
-            raise AIError(_friendly(exc)) from exc
+            raise AIError(_friendly(exc, self.provider)) from exc
+
+    # -- Claude: a forced tool call ---------------------------------------
+    def _claude(self, model, system, user, name, schema, max_tokens):
+        resp = self.client.messages.create(
+            model=model, max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[{"name": name, "description": "Return the result.", "input_schema": schema}],
+            tool_choice={"type": "tool", "name": name},
+        )
         for block in resp.content:
             if getattr(block, "type", "") == "tool_use":
                 return dict(block.input)
         raise AIError("Claude returned no answer (stop reason: %s)" % resp.stop_reason)
 
+    # -- OpenAI: Chat Completions with a strict JSON schema ---------------
+    def _openai(self, model, system, user, name, schema, max_tokens):
+        body = {
+            "model": model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": name, "strict": True, "schema": _strict(schema)}},
+            "max_completion_tokens": max(max_tokens, 2000),
+        }
+        data = _post("https://api.openai.com/v1/chat/completions", body,
+                     {"Authorization": "Bearer " + self.key}, "openai")
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        if msg.get("refusal"):
+            raise AIError("OpenAI declined: %s" % msg["refusal"][:120])
+        return _json(msg.get("content"), "OpenAI", choice.get("finish_reason"))
+
+    # -- Gemini: generateContent with a JSON schema -----------------------
+    def _gemini(self, model, system, user, schema, max_tokens):
+        url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model
+        base = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+        }
+        configs = (
+            {"responseMimeType": "application/json", "responseJsonSchema": schema},
+            {"responseMimeType": "application/json", "responseSchema": _openapi(schema)},
+        )
+        last = None
+        for extra in configs:
+            body = dict(base, generationConfig=dict(extra, maxOutputTokens=max(max_tokens, 2000)))
+            try:
+                data = _post(url, body, {"x-goog-api-key": self.key}, "gemini")
+            except _BadRequest as exc:          # older dialect - try the next form
+                last = exc
+                continue
+            cand = (data.get("candidates") or [{}])[0]
+            text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", [])
+                           if not p.get("thought"))
+            return _json(text, "Gemini", cand.get("finishReason"))
+        raise AIError(_friendly(last, "gemini"))
+
     def test(self):
-        out = self._call(self.fast, "Reply via the tool.", "Say ok.", "answer",
+        out = self._call(self.fast, "Answer in the requested format.", "Say ok.", "answer",
                          {"type": "object", "properties": {"ok": {"type": "string"}},
                           "required": ["ok"]}, 50)
         return bool(out)
@@ -156,21 +257,65 @@ class AI:
         return body
 
 
-def _friendly(exc):
+class _BadRequest(Exception):
+    pass
+
+
+def _post(url, body, headers, provider):
+    """POST JSON with a couple of retries on rate limits and busy servers."""
+    import requests
+
+    for attempt in range(3):
+        r = requests.post(url, json=body, headers=dict(headers, **{"Content-Type": "application/json"}),
+                          timeout=90)
+        if r.status_code == 200:
+            return r.json()
+        if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+            time.sleep(4 * (attempt + 1))
+            continue
+        try:
+            detail = r.json().get("error", {})
+            msg = detail.get("message") if isinstance(detail, dict) else str(detail)
+        except ValueError:
+            msg = r.text[:200]
+        text = "HTTP %d: %s" % (r.status_code, msg or "")
+        if r.status_code == 400 and provider == "gemini" and "schema" in (msg or "").lower():
+            raise _BadRequest(text)
+        raise RuntimeError(text)
+    raise RuntimeError("no answer")
+
+
+def _json(text, who, finish):
+    if not text:
+        raise AIError("%s returned no answer (%s)" % (who, finish or "empty"))
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`").split("\n", 1)[-1]
+    try:
+        return json.loads(text)
+    except ValueError:
+        if str(finish).lower() in ("length", "max_tokens"):
+            raise AIError("%s's answer was cut off - try again" % who)
+        raise AIError("%s returned something that isn't valid JSON" % who)
+
+
+def _friendly(exc, provider="anthropic"):
+    name = PROVIDERS.get(provider, {}).get("name", "The AI")
     text = str(exc)
     low = text.lower()
-    if "authentication" in low or "401" in low or "invalid x-api-key" in low:
-        return "The Anthropic API key was rejected - check it in Settings"
-    if "not_found" in low and "model" in low:
-        return "The AI model name in Settings doesn't exist"
-    if "credit" in low or "billing" in low:
-        return "Your Anthropic account is out of credit"
-    if "rate" in low and "limit" in low:
-        return "Anthropic rate limit hit - will retry"
-    if "overloaded" in low or "529" in low:
-        return "Claude is busy right now - will retry"
-    if "connection" in low or "timeout" in low:
-        return "Couldn't reach Anthropic - check the internet connection"
+    if any(k in low for k in ("authentication", "401", "invalid x-api-key", "incorrect api key",
+                              "api key not valid", "api_key_invalid", "permission_denied", "403")):
+        return "The %s API key was rejected - check it in Settings" % name
+    if ("not_found" in low or "404" in low or "does not exist" in low) and "model" in low:
+        return "The %s model name in Settings doesn't exist" % name
+    if any(k in low for k in ("credit", "billing", "insufficient_quota", "quota")):
+        return "Your %s account is out of credit or quota" % name
+    if "rate" in low and "limit" in low or "429" in low:
+        return "%s rate limit hit - will retry" % name
+    if any(k in low for k in ("overloaded", "529", "503", "unavailable")):
+        return "%s is busy right now - will retry" % name
+    if "connection" in low or "timeout" in low or "timed out" in low:
+        return "Couldn't reach %s - check the internet connection" % name
     return text[:160]
 
 

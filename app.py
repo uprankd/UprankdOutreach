@@ -68,7 +68,7 @@ def state():
     days = max(1, min(365, int(request.args.get("days") or 30)))
     now = time.time()
     start, prev = now - days * 86400, now - 2 * days * 86400
-    cw, ca = ("campaign_id=? AND status<>'in_db'", (camp,)) if camp else ("status<>'in_db'", ())
+    cw, ca = ("campaign_id=? AND NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))", (camp,)) if camp else ("NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))", ())
 
     def count(cond, args=(), lo=None, hi=None, field="created_at"):
         sql = "SELECT COUNT(*) AS n FROM sites WHERE %s AND %s" % (cw, cond)
@@ -135,7 +135,7 @@ def state():
         {"key": "account", "label": "Connect your email", "done": not any(
             m in missing for m in ("your email address", "an app password"))},
         {"key": "name", "label": "Add your name for the signature", "done": bool(cfg.get("sender_name"))},
-        {"key": "ai", "label": "Add an Anthropic API key", "done": bool(cfg.get("anthropic_key"))},
+        {"key": "ai", "label": "Add an AI key", "done": ai_mod.make(cfg) is not None},
         {"key": "sites", "label": "Add websites", "done": total("1=1") > 0},
         {"key": "send", "label": "Turn on sending", "done": cfg["send_mode"] != "off"},
     ]
@@ -156,7 +156,7 @@ def list_sites():
     camp = _campaign_arg()
     f = request.args.get("filter") or "all"
     q = (request.args.get("q") or "").strip().lower()
-    where, args = ["status<>'in_db'"], []
+    where, args = ["NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))"], []
     if camp:
         where.append("campaign_id=?")
         args.append(camp)
@@ -172,7 +172,7 @@ def list_sites():
     rows = db.sites(" AND ".join(where), tuple(args), "updated_at DESC", 2000)
     counts = {}
     for key, sts in FILTERS.items():
-        w, a = (["campaign_id=?", "status<>'in_db'"], [camp]) if camp else (["status<>'in_db'"], [])
+        w, a = (["campaign_id=?", "NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))"], [camp]) if camp else (["NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))"], [])
         if sts:
             w.append("status IN (%s)" % ",".join("?" * len(sts)))
             a += list(sts)
@@ -356,7 +356,10 @@ def test_email():
 def test_ai():
     cfg = settings.load()
     try:
-        ai_mod.AI(cfg["anthropic_key"], cfg["model_smart"], cfg["model_fast"]).test()
+        client = ai_mod.make(cfg)
+        if client is None:
+            return jsonify({"ok": False, "error": "Enter the API key first"})
+        client.test()
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
     return jsonify({"ok": True})
@@ -420,7 +423,7 @@ STAGES = {
     "outreach": "status IN ('queued','reading','ready','sending','waiting','followed_up','replied','needs_you')",
     "priced": "price<>'' AND lower(price)<>'unknown'",
     "noprice": "(price='' OR lower(price)='unknown')",
-    "closed": "status IN ('not_fit','no_email','declined','no_reply','bounced','error')",
+    "closed": "status IN ('not_fit','no_email','declined','no_reply','bounced','error','own')",
 }
 SORTS = {
     "domain": "domain", "country": "country", "status": "status", "updated": "updated_at",
@@ -470,7 +473,7 @@ def db_list():
     where, args = db_where(a)
     sort = SORTS.get(a.get("sort") or "", "updated_at")
     direction = "ASC" if a.get("dir") == "asc" else "DESC"
-    per = max(25, min(500, int(a.get("per") or 100)))
+    per = max(25, min(2000, int(a.get("per") or 2000)))
     page = max(0, int(a.get("page") or 0))
     text_sort = sort in ("domain", "country", "status", "link_insertion", "email")
     nulls = "(%s IS NULL OR %s='')" % (sort, sort) if text_sort else "%s IS NULL" % sort

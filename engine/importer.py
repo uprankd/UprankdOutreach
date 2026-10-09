@@ -40,6 +40,8 @@ HINTS = {
     "traffic": ("traffic", "organic traffic", "visits", "monthly traffic", "apmeklējums"),
     "country": ("country", "valsts", "market", "geo"),
     "language": ("language", "valoda", "lang"),
+    "status": ("status", "statuss", "checked?", "checked", "state"),
+    "email2": ("other emails", "email 2", "e-mail 2", "contact 2", "contact2"),
 }
 YES = {"yes", "y", "jā", "ja", "x", "true", "+", "1", "ok", "accept", "accepted", "allowed"}
 NO = {"no", "n", "nē", "ne", "false", "-", "0", "not", "nope", "rejected", "not allowed"}
@@ -160,6 +162,24 @@ def _clean(field, raw):
     return text[:500]
 
 
+# What a status column can say about a website that must not be pitched.
+_STATUS_RULES = (
+    (re.compile(r"uprankd|own site|own website|m[uū]su", re.I), ("own", "Uprankd website")),
+    (re.compile(r"no publication|not publish|nepublic", re.I), ("declined", "No publications")),
+    (re.compile(r"paus|apturēt", re.I), ("declined", "Service paused")),
+    (re.compile(r"do not contact|don'?t contact|nekontaktēt|declin|blacklist", re.I),
+     ("declined", "Do not contact")),
+)
+
+
+def _status(text):
+    """(status, note) for a status cell that rules a website out, else None."""
+    for pattern, result in _STATUS_RULES:
+        if pattern.search(text or ""):
+            return result
+    return None
+
+
 def read_rows(filename, raw):
     """[(sheet name, rows)] from an uploaded file."""
     name = filename.lower()
@@ -219,17 +239,24 @@ def _run(filename, raw, dry, campaign_id=None):
             seen.add(domain)
             n += 1
             values = {f: get(f) for f in FILLABLE}
+            status = _status(_cell(row[layout["status"]])) if layout.get("status") is not None \
+                and layout["status"] < len(row) else None
+            raw_emails = " ".join(_cell(row[layout[k]]) for k in ("email", "email2")
+                                  if layout.get(k) is not None and layout[k] < len(row))
+            all_emails = list(dict.fromkeys(e.lower() for e in finder.EMAIL_RE.findall(raw_emails)))
             values["country"] = values["country"] or sheet_country or countries.from_domain(domain)
             values["language"] = values["language"] if len(values["language"]) <= 5 else ""
             values = {k: v for k, v in values.items() if v}
             current = known.get(domain)
             if current is None:
                 stats["new"] += 1
-                inserts.append((domain, values))
+                inserts.append((domain, values, status, all_emails))
             else:
                 fill = {k: v for k, v in values.items()
                         if not str(current.get(k) or "").strip()
                         or str(current.get(k)).lower() == "unknown"}
+                if status and current.get("status") == "in_db" and current.get("note") != status[1]:
+                    fill.update(status=status[0], note=status[1])
                 if fill:
                     stats["updated"] += 1
                     updates.append((current["id"], fill))
@@ -242,12 +269,13 @@ def _run(filename, raw, dry, campaign_id=None):
         return stats
     camp = campaign_id or db.one("SELECT id FROM campaigns ORDER BY id")["id"]
     with db.tx() as conn:
-        for domain, values in inserts:
+        for domain, values, status, all_emails in inserts:
             values = dict(values)
-            emails = json.dumps([values["email"]] if values.get("email") else [])
-            cols = ["campaign_id", "domain", "status", "source", "emails", "contacted_before",
+            emails = json.dumps(all_emails or ([values["email"]] if values.get("email") else []))
+            state, note = status or ("in_db", "")
+            cols = ["campaign_id", "domain", "status", "note", "source", "emails", "contacted_before",
                     "created_at", "updated_at"] + list(values)
-            args = [camp, domain, "in_db", "import", emails, 1 if values.get("price") else 0,
+            args = [camp, domain, state, note, "import", emails, 1 if values.get("price") else 0,
                     now, now] + list(values.values())
             conn.execute("INSERT INTO sites (%s) VALUES (%s)" % (", ".join(cols), ",".join("?" * len(cols))),
                          args)

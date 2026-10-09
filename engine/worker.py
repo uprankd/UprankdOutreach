@@ -39,6 +39,7 @@ STATUS = {
     "needs_you": "Needs you",
     "complete": "Prices collected",
     "declined": "Declined",
+    "own": "Uprankd website",
     "no_reply": "No reply",
     "bounced": "Bounced",
     "error": "Error",
@@ -106,10 +107,8 @@ class Worker:
         self._stage_export(cfg)
 
     def _ai(self, cfg):
-        if not cfg.get("anthropic_key"):
-            return None
         try:
-            return ai_mod.AI(cfg["anthropic_key"], cfg["model_smart"], cfg["model_fast"])
+            return ai_mod.make(cfg)
         except Exception as exc:
             self.ai_error = str(exc)
             return None
@@ -506,7 +505,7 @@ class Worker:
         client = self._ai(cfg)
         if not client:
             db.update_site(site_id, status="needs_you",
-                           note="Reply received - add an Anthropic key to read replies automatically")
+                           note="Reply received - add an AI key in Settings to read replies automatically")
             return
         site = db.get_site(site_id)
         messages = db.thread(site_id)

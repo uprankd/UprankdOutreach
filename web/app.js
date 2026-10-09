@@ -72,11 +72,13 @@ const day = (ts) => ts ? new Date(ts * 1000).toLocaleDateString("en-GB", { day: 
 const campQ = () => (S.campaign ? "campaign=" + S.campaign : "");
 
 /* ------------------------------------------------------------------ shell */
-const NAV1 = [["overview", "Overview", "overview"], ["database", "Database", "database"], ["websites", "Outreach", "outreach"], ["attention", "Needs you", "attention"]];
+const NAV0 = [["database", "All websites", "database"]];
+const NAV1 = [["overview", "Overview", "overview"], ["websites", "Outreach", "outreach"], ["attention", "Needs you", "attention"]];
 const NAV2 = [["pitch", "Pitch email", "pitch"], ["settings", "Settings", "settings"]];
 function renderNav() {
   const att = S.data ? S.data.attention : 0;
   const item = ([key, label, ic]) => '<a href="#/' + key + '"' + (S.route === key ? ' aria-current="page"' : "") + ">" + icon(ic, "nav-icon") + '<span class="nav-label">' + label + "</span>" + (key === "attention" && att ? '<span class="count">' + att + "</span>" : "") + "</a>";
+  $("#nav0").innerHTML = NAV0.map(item).join("");
   $("#nav1").innerHTML = NAV1.map(item).join("");
   $("#nav2").innerHTML = NAV2.map(item).join("");
 }
@@ -146,7 +148,7 @@ function banners(d) {
 function renderOverview() {
   const d = S.data, v = $("#view");
   const setupLeft = d.setup.filter((x) => !x.done).length;
-  const hints = { account: "Gmail or Fastmail", name: "For your signature", ai: "Reads the replies", sites: "Paste a list", send: "Test first" };
+  const hints = { account: "Gmail or Fastmail", name: "For your signature", ai: "Claude, OpenAI or Gemini", sites: "Paste a list", send: "Test first" };
   const go = { account: "#/settings#account", name: "#/settings#account", ai: "#/settings#ai", sites: "add", send: "#/settings#sending" };
   let html = banners(d);
   if (setupLeft) {
@@ -254,7 +256,8 @@ const fav = (d) => '<img class="fav" alt="" loading="lazy" src="https://icons.du
 const yn = (v) => { const s = String(v || ""), l = s.toLowerCase(); return l === "yes" ? '<span class="yn y">Yes</span>' : l === "no" ? '<span class="yn n">No</span>' : !s || l === "unknown" ? '<span class="unk">–</span>' : '<span class="yn">' + esc(s) + "</span>"; };
 const eur = (v) => (v && /^\d/.test(v) ? "€" + esc(v) : '<span class="unk">–</span>');
 const linkIns = (v) => (/^\d/.test(v || "") ? "€" + esc(v) : yn(v));
-const DBF = (() => { try { return Object.assign({ q: "", country: "", stage: "", niches: [], price_min: "", price_max: "", sort: "updated", dir: "desc", page: 0 }, JSON.parse(store.get("almo-dbf", "{}"))); } catch (e) { return { q: "", country: "", stage: "", niches: [], price_min: "", price_max: "", sort: "updated", dir: "desc", page: 0 }; } })();
+const DB_DEFAULT = { q: "", country: "", stage: "", niches: [], price_min: "", price_max: "", sort: "domain", dir: "asc", page: 0 };
+const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
 const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"]];
@@ -263,11 +266,12 @@ function dbQuery(extra) {
   const p = new URLSearchParams();
   ["q", "country", "stage", "price_min", "price_max", "sort", "dir", "page"].forEach((k) => { if (DBF[k] !== "" && DBF[k] != null) p.set(k, DBF[k]); });
   if (DBF.niches.length) p.set("niches", DBF.niches.join(","));
-  if (S.campaign) p.set("campaign", S.campaign);
+  p.set("per", 2000);
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return p.toString();
 }
-function saveDBF() { store.set("almo-dbf", JSON.stringify(Object.assign({}, DBF, { page: 0 }))); }
+function saveDBF() {}
+function resetDBF() { Object.assign(DBF, JSON.parse(JSON.stringify(DB_DEFAULT))); DB.sel.clear(); DB.all = false; }
 function dbShell() {
   $("#view").innerHTML =
     '<section style="margin-bottom:34px"><div class="metrics" id="dbMetrics"></div></section>' +
@@ -313,7 +317,7 @@ async function loadDB() {
   $("#dbTbl").innerHTML = '<table class="dbt"><thead><tr><th class="cb"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td><td class="site l">' + fav(r.domain) + esc(r.domain) + '</td><td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td><td class=\"num\">" + eur(r.price) + '</td><td class="num">' + eur(r.special_price) + "</td><td>" + yn(r.casino) + "</td><td>" + yn(r.loan) + "</td><td>" + yn(r.crypto) + "</td><td>" + yn(r.adult) + "</td><td>" + linkIns(r.link_insertion) + '</td><td class="muted">' + (esc(r.dr) || '<span class="unk">–</span>') + '</td><td class="muted">' + (esc(r.traffic) || '<span class="unk">–</span>') + '</td><td class="l">' + pill(r.status, d.statuses) + "</td></tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
-  $("#dbPager").innerHTML = '<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>";
+  $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
   renderBulk();
 }
 function renderBulk() {
@@ -349,7 +353,7 @@ async function importDB(file) {
     const sheets = p.sheets.filter((s) => s.rows).map((s) => (s.name ? s.name + " " : "") + "(" + s.rows + ")").join(", ");
     if (!p.new && !p.updated) { toast("Nothing new in " + file.name + " - all " + fmt(p.unchanged) + " websites are already in the database", 5000); return; }
     if (!confirm("Import " + file.name + "?\n\n" + fmt(p.new) + " new websites\n" + fmt(p.updated) + " existing ones get missing details filled in\n" + fmt(p.unchanged) + " already up to date\n\nSheets: " + sheets + "\n\nNothing Almo collected is overwritten.")) return;
-    const fd2 = new FormData(); fd2.append("file", file); if (S.campaign) fd2.append("campaign_id", S.campaign);
+    const fd2 = new FormData(); fd2.append("file", file);
     const r = await api("/api/db/import", { body: fd2 });
     toast("Imported " + fmt(r.new) + " new, updated " + fmt(r.updated), 4000);
     DBF.page = 0; loadDB(); refresh();
@@ -459,8 +463,11 @@ function renderSettings() {
       (st.provider === "Other" ? '<div class="fld"><span class="label">SMTP server</span><input data-k="smtp_host" value="' + esc(st.smtp_host) + '"></div>' + num("smtp_port", "SMTP port") + '<div class="fld"><span class="label">IMAP server</span><input data-k="imap_host" value="' + esc(st.imap_host) + '"></div>' + num("imap_port", "IMAP port") : "") +
       '<div class="fld"><span class="label">Your name</span><input data-k="sender_name" value="' + esc(st.sender_name) + '" placeholder="Kristiāns Safronovs"></div><div class="fld"><span class="label">Job title</span><input data-k="sender_title" value="' + esc(st.sender_title) + '"></div>' +
       '</div><div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl" data-test="email">Save and test</button><span class="result" id="r-email"></span></div>') +
-    card("ai", "AI", "Reads replies and pulls out the prices.",
-      '<div class="fld"><span class="label">Anthropic API key</span><input data-k="anthropic_key" type="password" placeholder="' + (st.anthropic_key_set ? "Saved" : "sk-ant-…") + '"><span class="hint"><a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get one ↗</a></span></div><div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl" data-test="ai">Save and test</button><span class="result" id="r-ai"></span></div>') +
+    card("ai", "AI", "Reads websites and replies, pulls out the prices and writes follow-ups. Pick one.",
+      '<div class="seg" id="aiprov" style="margin-bottom:18px">' + [["anthropic", "Claude"], ["openai", "OpenAI"], ["gemini", "Gemini"]].map(([k, l]) => '<button data-aip="' + k + '" class="' + ((st.ai_provider || "anthropic") === k ? "is-on" : "") + '">' + l + "</button>").join("") + "</div>" +
+      (() => { const P = { anthropic: ["Anthropic API key", "anthropic_key", "sk-ant-…", "https://console.anthropic.com/settings/keys"], openai: ["OpenAI API key", "openai_key", "sk-…", "https://platform.openai.com/api-keys"], gemini: ["Gemini API key", "gemini_key", "AIza…", "https://aistudio.google.com/apikey"] }[st.ai_provider || "anthropic"];
+        return '<div class="fld"><span class="label">' + P[0] + '</span><input data-k="' + P[1] + '" type="password" placeholder="' + (st[P[1] + "_set"] ? "Saved" : P[2]) + '"><span class="hint"><a href="' + P[3] + '" target="_blank" rel="noopener">Get one ↗</a></span></div>'; })() +
+      '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl" data-test="ai">Save and test</button><span class="result" id="r-ai"></span></div>') +
     card("sending", "Sending", "",
       '<div class="modes">' + [["off", "Off", "Nothing is sent."], ["test", "Test", "Everything goes to you."], ["live", "Live", "Sends to the websites."]]
         .map(([k, t, p]) => '<button class="mode' + (st.send_mode === k ? " is-on" : "") + '" data-mode="' + k + '"><b><span class="dot' + (k === "live" ? " on" : k === "test" ? " warn" : "") + '"></span>' + t + "</b><p>" + p + "</p></button>").join("") + "</div>") +
@@ -471,7 +478,7 @@ function renderSettings() {
       '<div class="fld"><span class="label">Sending hours</span><div class="inline"><input data-k="work_start" value="' + st.work_start + '"><span class="dim">–</span><input data-k="work_end" value="' + st.work_end + '"></div></div>' +
       num("inbox_every_min", "Check inbox every (min)") + '<div class="fld"><span class="label">Company</span><input data-k="company" value="' + esc(st.company) + '"></div>' +
       '<div class="fld full"><span class="label">Results Excel file</span><input data-k="results_path" value="' + esc(st.results_path) + '" placeholder="~/Desktop/Almo results.xlsx"><span class="hint">Kept up to date automatically. Empty = off.</span></div>' +
-      '<div class="fld full"><span class="label">Database</span><div class="dbinfo"><b>' + esc(st.database.kind) + '</b><span class="muted">' + esc(st.database.where) + '</span></div><span class="hint">To use a shared PostgreSQL server, put its address in database_url.txt next to the app and restart. See the README.</span></div>' + '<div class="fld"><span class="label">AI model (replies)</span><input data-k="model_smart" value="' + esc(st.model_smart) + '"></div><div class="fld"><span class="label">AI model (site checks)</span><input data-k="model_fast" value="' + esc(st.model_fast) + '"></div></div></div></details>' +
+      '<div class="fld full"><span class="label">Database</span><div class="dbinfo"><b>' + esc(st.database.kind) + '</b><span class="muted">' + esc(st.database.where) + '</span></div><span class="hint">To use a shared PostgreSQL server, put its address in database_url.txt next to the app and restart. See the README.</span></div>' + '<div class="fld"><span class="label">AI model (replies)</span><input data-k="' + (st.ai_provider || "anthropic") + '_smart" value="' + esc(st[(st.ai_provider || "anthropic") + "_smart"]) + '"></div><div class="fld"><span class="label">AI model (site checks)</span><input data-k="' + (st.ai_provider || "anthropic") + '_fast" value="' + esc(st[(st.ai_provider || "anthropic") + "_fast"]) + '"></div></div></div></details>' +
     '<div class="savebar"><span class="small" id="saveNote"></span><button class="ctl ctl--primary" id="saveAll">Save</button></div></div>';
   const hash = location.hash.split("#")[2];
   if (hash && $("#" + hash)) setTimeout(() => $("#" + hash).scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -482,10 +489,11 @@ function collectSettings() {
   $$("[data-k]").forEach((el) => {
     let val = el.value;
     if (el.dataset.k === "results_path") val = val.trim();
-    if ((el.dataset.k === "email_password" || el.dataset.k === "anthropic_key") && !val) return;
+    if (["email_password", "anthropic_key", "openai_key", "gemini_key"].includes(el.dataset.k) && !val) return;
     out[el.dataset.k] = val;
   });
   const prov = $("#prov .is-on"); if (prov) out.provider = prov.dataset.p;
+  const aip = $("#aiprov .is-on"); if (aip) out.ai_provider = aip.dataset.aip;
   $$("[data-sw]").forEach((el) => (out[el.dataset.sw] = el.classList.contains("on")));
   return out;
 }
@@ -495,7 +503,7 @@ async function saveSettings(quiet) {
   if (r.problems && r.problems.length) { toast("Check: " + r.problems.join(", "), 5000); return false; }
   S.data.settings = r.settings;
   if ($("#saveNote")) $("#saveNote").textContent = "Saved";
-  $$('[data-k="email_password"],[data-k="anthropic_key"]').forEach((el) => { if (el.value) { el.value = ""; el.placeholder = "•••••••••••• saved"; } });
+  $$('[data-k="email_password"],[data-k="anthropic_key"],[data-k="openai_key"],[data-k="gemini_key"]').forEach((el) => { if (el.value) { el.value = ""; el.placeholder = "•••••••••••• saved"; } });
   if (!quiet) toast("Settings saved");
   refresh();
   return true;
@@ -531,7 +539,7 @@ async function loadFile(file) {
 }
 
 /* ------------------------------------------------------------------ router */
-const TITLES = { overview: "Overview", database: "Database", websites: "Outreach", attention: "Needs you", pitch: "Pitch email", settings: "Settings" };
+const TITLES = { overview: "Overview", database: "Website database", websites: "Outreach", attention: "Needs you", pitch: "Pitch email", settings: "Settings" };
 function route() {
   if (/^#\/prices/.test(location.hash)) { DBF.stage = "priced"; saveDBF(); location.replace("#/database"); return; }
   if ($("#addModal").classList.contains("open")) closeAdd();
@@ -541,7 +549,7 @@ function route() {
   S.route = TITLES[path] ? path : "overview";
   if (qs) { const f = new URLSearchParams(qs).get("f"); if (f) S.filter = Object.keys({ all: 1, progress: 1, waiting: 1, attention: 1, done: 1, closed: 1 }).includes(f) ? f : statusToTab(f); }
   $("#title").textContent = S.route === "overview" ? (S.data && S.campaign ? (S.data.campaigns.find((c) => c.id === S.campaign) || {}).name || "Overview" : "Overview") : TITLES[S.route];
-  const subs = { overview: S.data ? fmt(S.data.funnel[0].value) + " websites in outreach" : "", database: "Every website we know, with prices and terms", websites: "Websites Almo is working on", attention: "Replies that need a look", pitch: "", settings: "" };
+  const subs = { overview: S.data ? fmt(S.data.funnel[0].value) + " websites in outreach" : "", database: "Every website we know, across all campaigns", websites: "Websites Almo is working on", attention: "Replies that need a look", pitch: "", settings: "" };
   $("#subtitle").textContent = subs[S.route];
   $("#range").style.display = S.route === "overview" ? "" : "none";
   $("#exportBtn").style.display = S.route === "database" ? "none" : "";
@@ -549,10 +557,11 @@ function route() {
   if (!S.data) return;
   if (S.route === "overview") renderOverview();
   else if (["websites", "attention"].includes(S.route)) { sitesShell(); loadSites(); }
-  else if (S.route === "database") { dbShell(); loadDB(); }
+  else if (S.route === "database") { if (S.prevRoute !== "database") resetDBF(); dbShell(); loadDB(); }
   else if (S.route === "pitch") renderPitch();
   else if (S.route === "settings") renderSettings();
   $(".content").scrollTop = 0;
+  S.prevRoute = S.route;
 }
 function statusToTab(s) { for (const [k, v] of Object.entries({ progress: ["queued", "reading", "ready", "sending"], waiting: ["waiting", "followed_up"], attention: ["needs_you", "replied", "error"], done: ["complete"], closed: ["not_fit", "no_email", "declined", "no_reply", "bounced"] })) if (v.includes(s)) return k; return "all"; }
 
@@ -574,7 +583,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { const q = $("#dbq") || $("#q"); if (q) { e.preventDefault(); q.focus(); } }
 });
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-go],[data-site],[data-f],[data-act],[data-sa],[data-close],[data-close-drawer],[data-mode],[data-p],[data-sw],[data-test],[data-c]");
+  const t = e.target.closest("[data-go],[data-site],[data-f],[data-act],[data-sa],[data-close],[data-close-drawer],[data-mode],[data-p],[data-aip],[data-sw],[data-test],[data-c]");
   if (!t) { if (!e.target.closest("#campMenu")) $("#campMenu").classList.remove("open"); return; }
   if (t.dataset.go) { if (t.dataset.go === "add") openAdd(); else location.hash = t.dataset.go; return; }
   if (t.dataset.site) { openSite(Number(t.dataset.site)); return; }
@@ -602,6 +611,7 @@ document.addEventListener("click", async (e) => {
     toast({ off: "Sending is off", test: "Test mode on - emails go to you", live: "Live - Almo is sending" }[mode]);
     await refresh(); renderSettings(); return;
   }
+  if (t.dataset.aip) { const vals = collectSettings(); vals.ai_provider = t.dataset.aip; await api("/api/settings", { body: vals }); await refresh(); renderSettings(); setTimeout(() => $("#ai") && $("#ai").scrollIntoView({ block: "center" }), 30); return; }
   if (t.dataset.p) { const vals = collectSettings(); vals.provider = t.dataset.p; await api("/api/settings", { body: vals }); await refresh(); renderSettings(); return; }
   if (t.dataset.sw) { t.classList.toggle("on"); S.settingsDirty = true; $("#saveNote").textContent = "Unsaved changes"; return; }
   if (t.dataset.test) {

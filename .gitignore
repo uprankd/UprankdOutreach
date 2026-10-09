@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+setup.log
+# Contains the database password - never commit
+database_url.txt

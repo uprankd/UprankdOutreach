@@ -3,7 +3,7 @@ keychain (macOS Keychain / Windows Credential Manager) when available."""
 
 import db
 
-SECRET_KEYS = ("email_password", "anthropic_key")
+SECRET_KEYS = ("email_password", "anthropic_key", "openai_key", "gemini_key")
 _SERVICE = "Almo outreach"
 
 DEFAULTS = {
@@ -36,8 +36,15 @@ DEFAULTS = {
     "inbox_every_min": 5,
     "recontact_days": 180,
     # AI
+    "ai_provider": "anthropic",       # anthropic | openai | gemini
     "model_smart": "claude-sonnet-5-5",
     "model_fast": "claude-haiku-5-5",
+    "anthropic_smart": "claude-sonnet-5-5",
+    "anthropic_fast": "claude-haiku-5-5",
+    "openai_smart": "gpt-6.1-sol",
+    "openai_fast": "gpt-6-luna",
+    "gemini_smart": "gemini-3.8-flash",
+    "gemini_fast": "gemini-3.5-flash-lite",
     # Results file
     "results_path": "~/Desktop/Almo results.xlsx",
     "theme": "dark",
@@ -110,6 +117,7 @@ def public():
     cfg = load()
     for key in SECRET_KEYS:
         cfg[key + "_set"] = bool(cfg.pop(key))
+    cfg["ai_key_set"] = cfg.get((cfg.get("ai_provider") or "anthropic") + "_key_set", False)
     cfg["database"] = db.describe()
     return cfg
 
@@ -148,6 +156,8 @@ def save(values):
         clean["gap_max"] = clean["gap_min"]
     if "send_mode" in clean and clean["send_mode"] not in ("off", "test", "live"):
         clean.pop("send_mode")
+    if "ai_provider" in clean and clean["ai_provider"] not in ("anthropic", "openai", "gemini"):
+        clean.pop("ai_provider")
     db.save_settings(clean)
     return problems
 
