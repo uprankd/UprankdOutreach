@@ -371,3 +371,55 @@ details.msg:not([open]){padding-top:11px;padding-bottom:11px}
 .signout{margin-left:auto;font-size:var(--t-small);color:var(--ink-3);text-decoration:none;white-space:nowrap}
 .signout:hover{color:var(--ink)}
 :root[data-rail=collapsed] .signout{display:none}
+
+/* ---------- email column + copy ---------- */
+td.email{white-space:nowrap;max-width:230px}
+td.email .addr{display:inline-block;max-width:180px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;color:var(--ink-2)}
+.copy{display:inline-grid;place-items:center;width:24px;height:24px;margin-left:4px;padding:0;border:1px solid transparent;border-radius:5px;background:none;color:var(--ink-4);cursor:pointer;vertical-align:middle;opacity:0;transition:opacity .12s,color .12s}
+.copy svg{width:13px;height:13px}
+tr:hover .copy,.copy:focus-visible{opacity:1}
+.copy:hover{color:var(--sky);border-color:var(--rule-2);background:var(--paper)}
+.copy.done{opacity:1;color:var(--good)}
+@media (hover:none){.copy{opacity:1}}
+
+/* ---------- mailboxes ---------- */
+.box{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--rule);flex-wrap:wrap}
+.box:first-child{padding-top:0}
+.box .grow{flex:1;min-width:200px;display:flex;flex-direction:column;gap:2px}
+.box .grow b{color:var(--ink);font-weight:600}
+.box .grow span{font-size:var(--t-small)}
+.box.off .grow b{color:var(--ink-3)}
+.box .today{display:flex;align-items:baseline;gap:4px;font-size:var(--t-small);color:var(--ink-3);min-width:96px}
+.box .today b{color:var(--ink);font-size:var(--t-body)}
+.box .result{margin:0;min-height:0}
+.boxform{margin-top:14px;padding:18px;border:1px solid var(--rule-2);border-radius:var(--r);background:var(--wash)}
+.boxform .fld input{background:var(--paper)}
+
+/* ---------- A/B pitches ---------- */
+.vtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--rule)}
+.vtabs button{height:30px;padding:0 13px;border:1px solid var(--rule-2);border-radius:var(--r);background:var(--paper);color:var(--ink-3);font:inherit;font-size:var(--t-body);font-weight:500;cursor:pointer}
+.vtabs button.is-on{color:var(--ink);font-weight:600;border-color:var(--sky);box-shadow:0 0 0 3px var(--sky-tint)}
+.vtabs button.off{text-decoration:line-through;text-decoration-color:var(--ink-4)}
+.vtabs .vadd{display:inline-flex;align-items:center;gap:6px;border-style:dashed}
+.vtabs .vadd svg{width:13px;height:13px}
+.abcard{margin-bottom:26px}
+.abt{width:100%;border-collapse:collapse}
+.abt th,.abt td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--rule);font-size:var(--t-body)}
+.abt th{font-size:var(--t-label);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4);font-weight:600}
+.abt .l{text-align:left}
+.abt tbody tr{cursor:pointer}
+.abt tbody tr.cur td{background:var(--sky-tint)}
+.abt td.subj{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vlabel{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:5px;background:var(--wash-2);color:var(--ink);font-weight:700;font-size:12px}
+.vlabel.off{color:var(--ink-4)}
+.tag.good{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
+
+/* ---------- export dialog ---------- */
+.check{display:flex;align-items:center;gap:9px;margin-top:16px;font-size:var(--t-body);color:var(--ink-2);cursor:pointer}
+.check input{width:16px;height:16px;accent-color:var(--sky)}
+.example{margin-top:18px;padding:14px 16px;border-radius:var(--r);background:var(--wash-2)}
+.example .label{margin:0 0 8px}
+.exrow{display:grid;grid-template-columns:1fr auto 24px 70px;gap:8px;align-items:baseline;font-size:var(--t-body);padding:3px 0}
+.exrow .arrow{color:var(--ink-4);text-align:center}
+.exrow b{color:var(--ink);text-align:right}
+.exrow .muted{text-align:right}

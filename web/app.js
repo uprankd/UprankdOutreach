@@ -27,6 +27,8 @@ const I = {
   download: '<path d="M8 2.5V11m0 0L4.8 7.8M8 11l3.2-3.2M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2"/>',
   database: '<ellipse cx="8" cy="3.8" rx="5.5" ry="1.9"/><path d="M2.5 3.8v8.4c0 1 2.5 1.9 5.5 1.9s5.5-.9 5.5-1.9V3.8M2.5 8c0 1 2.5 1.9 5.5 1.9s5.5-.9 5.5-1.9"/>',
   outreach: '<path d="M14 2 7 9M14 2l-4.5 12L7 9 2 6.5 14 2Z"/>',
+  copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
   inbox: '<path d="M2 9.5 3.6 3.7a1 1 0 0 1 1-.7h6.8a1 1 0 0 1 1 .7L14 9.5V13H2V9.5Zm0 0h3.5l1 1.5h3l1-1.5H14"/>',
 };
 const icon = (n, cls = "") => '<svg class="' + cls + '" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' + I[n] + "</svg>";
@@ -59,6 +61,11 @@ async function api(path, opts = {}) {
 function toast(msg, ms = 3200) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), ms);
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch (e) {}
+  const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e) {} ta.remove();
 }
 const ago = (ts) => {
   if (!ts) return "";
@@ -148,13 +155,13 @@ function banners(d) {
   if (w.ai_error) out.push(b("", "info", "<b>AI problem:</b> " + esc(w.ai_error), '<a class="ctl ctl--tiny" href="#/settings">Settings</a>'));
   if (!st.running) out.push(b("", "info", "Paused. Nothing is checked or sent.", '<button class="ctl ctl--tiny" data-act="resume">Resume</button>'));
   else if (st.send_mode === "off" && d.setup[3].done) out.push(b("sky", "info", "Sending is off. Websites are checked and emails found, but nothing is sent yet.", '<a class="ctl ctl--tiny" href="#/settings#sending">Turn on sending</a>'));
-  else if (st.send_mode === "test") out.push(b("sky", "info", "Test mode: emails go to <b>" + esc(st.email) + "</b>, not to the websites.", '<a class="ctl ctl--tiny" href="#/settings#sending">Change</a>'));
+  else if (st.send_mode === "test") out.push(b("sky", "info", "Test mode: each email goes to the mailbox that sends it (<b>" + esc((st.mailboxes || []).filter((b) => b.active).map((b) => b.email).join(", ") || "your mailbox") + "</b>), not to the websites.", '<a class="ctl ctl--tiny" href="#/settings#sending">Change</a>'));
   return out.join("");
 }
 function renderOverview() {
   const d = S.data, v = $("#view");
   const setupLeft = d.setup.filter((x) => !x.done).length;
-  const hints = { account: "Gmail or Fastmail", name: "For your signature", ai: "Claude, OpenAI or Gemini", sites: "Paste a list", send: "Test first" };
+  const hints = { account: "Gmail, Fastmail or Zoho", name: "For your signature", ai: "Claude, OpenAI or Gemini", sites: "Paste a list", send: "Test first" };
   const go = { account: "#/settings#account", name: "#/settings#account", ai: "#/settings#ai", sites: "add", send: "#/settings#sending" };
   let html = banners(d);
   if (setupLeft) {
@@ -267,7 +274,9 @@ const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
 const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"]];
-const COLS = [["domain", "Website", "l"], ["country", "Country", "l"], ["price", "Price"], ["special", "Special"], [null, "Casino"], [null, "Loan"], [null, "Crypto"], [null, "Adult"], ["link", "Link ins."], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
+const COLS = [["domain", "Website", "l"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], ["special", "Special"], [null, "Casino"], [null, "Loan"], [null, "Crypto"], [null, "Adult"], ["sponsored", "Sponsored tag"], ["link", "Link ins."], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
+const emailCell = (e) => e ? '<td class="l email"><span class="addr" title="' + esc(e) + '">' + esc(e) + '</span><button class="copy" data-copy="' + esc(e) + '" title="Copy email" aria-label="Copy ' + esc(e) + '">' + icon("copy") + "</button></td>" : '<td class="l"><span class="unk">–</span></td>';
+const tagCell = (v) => { const l = String(v || "").toLowerCase(); return l === "yes" ? '<span class="yn y" title="Articles are marked as sponsored">Marked</span>' : l === "no" ? '<span class="yn n" title="Articles are not marked as sponsored">Not marked</span>' : yn(v); };
 function dbQuery(extra) {
   const p = new URLSearchParams();
   ["q", "country", "stage", "price_min", "price_max", "sort", "dir", "page"].forEach((k) => { if (DBF[k] !== "" && DBF[k] != null) p.set(k, DBF[k]); });
@@ -311,7 +320,7 @@ async function loadDB() {
   const cs = d.countries;
   $("#dbCountry").innerHTML = '<option value="">All countries</option>' + cs.map((c) => '<option value="' + esc(c.country) + '"' + (DBF.country === c.country ? " selected" : "") + ">" + esc(c.country) + " (" + c.n + ")</option>").join("");
   $("#dbStage").innerHTML = STAGE_TABS.map(([k, l]) => '<button data-stage="' + k + '" class="' + (DBF.stage === k ? "is-on" : "") + '">' + l + "</button>").join("");
-  $("#dbExport").href = "/api/export?db=1&" + dbQuery();
+  $("#dbExport").onclick = (e) => { e.preventDefault(); openExport("db=1&" + dbQuery(), DB.total === sm.total ? fmt(sm.total) + " websites matching the filters" : ""); };
   if (!d.rows.length) {
     $("#dbTbl").innerHTML = d.total || DBF.q || DBF.country || DBF.stage || DBF.niches.length || DBF.price_min || DBF.price_max
       ? '<div class="empty"><strong>Nothing matches</strong><p>Try fewer filters.</p><button class="ctl" data-dbclear>Clear filters</button></div>'
@@ -321,7 +330,7 @@ async function loadDB() {
   const th = ([key, label, cls]) => key ? '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '"' + (DBF.sort === key ? ' aria-sort="' + (DBF.dir === "asc" ? "ascending" : "descending") + '"' : "") + ">" + label + '<span class="arr">' + (DBF.sort === key ? (DBF.dir === "asc" ? "↑" : "↓") : "") + "</span></th>" : '<th class="' + (cls || "") + '">' + label + "</th>";
   const allOn = DB.rows.every((r) => DB.sel.has(r.id));
   $("#dbTbl").innerHTML = '<table class="dbt"><thead><tr><th class="cb"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
-    d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td><td class="site l">' + fav(r.domain) + esc(r.domain) + '</td><td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td><td class=\"num\">" + eur(r.price) + '</td><td class="num">' + eur(r.special_price) + "</td><td>" + yn(r.casino) + "</td><td>" + yn(r.loan) + "</td><td>" + yn(r.crypto) + "</td><td>" + yn(r.adult) + "</td><td>" + linkIns(r.link_insertion) + '</td><td class="muted">' + (esc(r.dr) || '<span class="unk">–</span>') + '</td><td class="muted">' + (esc(r.traffic) || '<span class="unk">–</span>') + '</td><td class="l">' + pill(r.status, d.statuses) + "</td></tr>").join("") + "</tbody></table>";
+    d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td><td class="site l">' + fav(r.domain) + esc(r.domain) + '</td><td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email) + "<td class=\"num\">" + eur(r.price) + '</td><td class="num">' + eur(r.special_price) + "</td><td>" + yn(r.casino) + "</td><td>" + yn(r.loan) + "</td><td>" + yn(r.crypto) + "</td><td>" + yn(r.adult) + "</td><td>" + tagCell(r.sponsored_tag) + "</td><td>" + linkIns(r.link_insertion) + '</td><td class="muted">' + (esc(r.dr) || '<span class="unk">–</span>') + '</td><td class="muted">' + (esc(r.traffic) || '<span class="unk">–</span>') + '</td><td class="l">' + pill(r.status, d.statuses) + "</td></tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
   $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
   renderBulk();
@@ -339,7 +348,7 @@ async function bulkDB(action) {
   if (action === "all") { DB.all = true; renderBulk(); return; }
   const body = DB.all ? { all: true, filters: Object.fromEntries(new URLSearchParams(dbQuery())) } : { ids: [...DB.sel] };
   if (action === "export") {
-    location.href = DB.all ? "/api/export?db=1&" + dbQuery() : "/api/export?ids=" + [...DB.sel].join(",");
+    openExport(DB.all ? "db=1&" + dbQuery() : "ids=" + [...DB.sel].join(","), fmt(DB.all ? DB.total : DB.sel.size) + " selected websites");
     return;
   }
   const n = DB.all ? DB.total : DB.sel.size;
@@ -393,7 +402,7 @@ async function openSite(id, quiet) {
     (primary ? '<div class="dactions">' + primary + "</div>" : "") +
     '<section><div class="head"><h3 class="sec">Terms</h3>' + (edit ? "" : '<button class="ctl ctl--tiny" data-sa="edit">Edit</button>') + "</div>" + (edit ? editForm : facts + topics + (s.requirements ? '<p class="notes">' + esc(s.requirements) + "</p>" : "")) + "</section>" +
     (s.draft ? '<section><div class="head"><h3 class="sec">Follow-up ready to send</h3></div><div class="fld"><textarea id="draftIn" style="min-height:150px">' + esc(s.draft) + '</textarea></div><div style="margin-top:12px"><button class="ctl ctl--primary" data-sa="send_draft">Send follow-up</button></div></section>' : "") +
-    '<section><div class="head"><h3 class="sec">Contact</h3></div><div class="inline"><div class="fld" style="flex:1"><input id="emailIn" value="' + esc(s.email) + '" placeholder="Add an email address"></div><button class="ctl" data-sa="set_email">Save email</button></div>' +
+    '<section><div class="head"><h3 class="sec">Contact</h3></div><div class="inline"><div class="fld" style="flex:1"><input id="emailIn" value="' + esc(s.email) + '" placeholder="Add an email address"></div><button class="ctl" data-sa="set_email">Save email</button>' + (s.email ? '<button class="ctl ctl--icon" data-copy="' + esc(s.email) + '" title="Copy email">' + icon("copy") + "</button>" : "") + "</div>" +
     (s.emails.length > 1 ? '<p class="small" style="margin:10px 0 0">Also found: ' + s.emails.slice(1, 6).map(esc).join(", ") + "</p>" : "") + (s.fit_reason ? '<p class="small" style="margin:6px 0 0">Site check: ' + esc(s.fit_reason) + "</p>" : "") + "</section>" +
     '<section><div class="head"><h3 class="sec">Emails</h3>' + (d.thread.length ? '<span class="small">' + d.thread.length + "</span>" : "") + "</div>" + thread + "</section>" +
     '<section class="dfoot"><button class="linkbtn danger" data-sa="remove">Remove from Almo</button></section></div>';
@@ -427,27 +436,54 @@ async function siteAction(action) {
 async function renderPitch() {
   const d = S.data, v = $("#view");
   const camp = d.campaigns.find((c) => c.id === S.campaign) || d.campaigns[0];
-  v.innerHTML = '<div class="pitch-layout"><div>' +
-    (S.campaign ? "" : '<div class="banner sky">' + icon("info") + '<div class="grow">Editing the <b>' + esc(camp.name) + "</b> campaign. Pick a campaign on the left to edit its own pitch.</div></div>") +
-    '<div class="card"><div class="form-grid"><div class="fld full"><span class="label">Campaign name</span><input id="pName" value="' + esc(camp.name) + '"></div>' +
-    '<div class="fld full"><span class="label">Subject</span><input id="pSubj" value="' + esc(camp.subject) + '"></div>' +
-    '<div class="fld full"><span class="label">Message</span><textarea id="pBody" style="min-height:300px">' + esc(camp.body) + '</textarea><span class="hint">Write in English. It\'s translated for each site, and your signature is added.</span><div class="vars"><code data-ins="{domain}">{domain}</code></div></div></div>' +
-    '<div style="display:flex;gap:10px;margin-top:18px"><button class="ctl ctl--primary" id="pSave">Save pitch</button>' + (d.campaigns.length > 1 ? '<button class="ctl ctl--danger" id="pDel">Delete campaign</button>' : "") + '</div></div></div>' +
-    '<div><div class="head" style="margin-bottom:12px"><div><h2 class="sec">Preview</h2></div><div class="inline"><input class="search" style="min-width:150px;padding-left:11px;background-image:none" id="pvDomain" value="delfi.lv"><select class="ctl" id="pvLang"><option value="">English</option><option value="lv">Latvian</option><option value="de">German</option><option value="lt">Lithuanian</option><option value="et">Estonian</option><option value="nl">Dutch</option><option value="pl">Polish</option><option value="el">Greek</option></select></div></div><div class="preview"><div class="ph" id="pvSubj">…</div><iframe id="pvFrame" title="Preview"></iframe></div></div></div>';
+  let pitches;
+  try { pitches = (await api("/api/campaigns/" + camp.id + "/pitches")).pitches; } catch (e) { toast(e.message); return; }
+  if (S.route !== "pitch") return;
+  let cur = pitches.find((p) => p.id === S.pitch) || pitches[0];
+  S.pitch = cur.id;
+  const rate = (p) => (p.reply_rate == null ? "–" : p.reply_rate + "%");
+  const best = pitches.filter((p) => p.sent >= 20).sort((a, b) => b.reply_rate - a.reply_rate)[0];
+  const stats = pitches.length > 1 || cur.sent ? '<div class="card abcard"><div class="head" style="margin-bottom:10px"><h2 class="sec">A/B results</h2><span class="small">' + (pitches.filter((p) => p.active).length > 1 ? "Active pitches take turns, so each gets the same share" : "Add a second pitch to compare") + "</span></div>" +
+    '<table class="abt"><thead><tr><th class="l">Pitch</th><th class="l">Subject</th><th>Sent</th><th>Replies</th><th>Reply rate</th><th>Prices</th></tr></thead><tbody>' +
+    pitches.map((p) => '<tr data-pv="' + p.id + '" class="' + (p.id === cur.id ? "cur" : "") + '"><td class="l"><span class="vlabel' + (p.active ? "" : " off") + '">' + esc(p.label) + "</span>" + (best && best.id === p.id && pitches.length > 1 ? '<span class="tag good">Best</span>' : "") + (p.active ? "" : '<span class="tag">Off</span>') + '</td><td class="l muted subj">' + esc(p.subject) + "</td><td>" + fmt(p.sent) + "</td><td>" + fmt(p.replies) + "</td><td><b>" + rate(p) + "</b></td><td>" + fmt(p.prices) + "</td></tr>").join("") +
+    "</tbody></table>" + (pitches.length > 1 && !best ? '<p class="small" style="margin:10px 0 0">Wait for about 20 sends per pitch before picking a winner.</p>' : "") + "</div>" : "";
+  v.innerHTML = (S.campaign ? "" : '<div class="banner sky">' + icon("info") + '<div class="grow">Editing the <b>' + esc(camp.name) + "</b> campaign. Pick a campaign on the left to edit its own pitch.</div></div>") + stats +
+    '<div class="pitch-layout"><div>' +
+    '<div class="card"><div class="fld full" style="margin-bottom:18px"><span class="label">Campaign name</span><input id="pName" value="' + esc(camp.name) + '"></div>' +
+    '<div class="vtabs">' + pitches.map((p) => '<button data-pv="' + p.id + '" class="' + (p.id === cur.id ? "is-on" : "") + (p.active ? "" : " off") + '">Pitch ' + esc(p.label) + "</button>").join("") + '<button class="vadd" id="pAdd" title="Add another version to test against">' + icon("plus") + "A/B version</button></div>" +
+    '<div class="form-grid"><div class="fld full"><span class="label">Subject</span><input id="pSubj" value="' + esc(cur.subject) + '"></div>' +
+    '<div class="fld full"><span class="label">Message</span><textarea id="pBody" style="min-height:300px">' + esc(cur.body) + '</textarea><span class="hint">Write in English. It\'s translated for each site, and the sending mailbox\'s signature is added.</span><div class="vars"><code data-ins="{domain}">{domain}</code></div></div></div>' +
+    '<div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap"><button class="ctl ctl--primary" id="pSave">Save pitch ' + esc(cur.label) + "</button>" +
+    (pitches.length > 1 ? '<button class="ctl" id="pToggle">' + (cur.active ? "Turn off" : "Turn on") + "</button>" + (cur.sent ? "" : '<button class="ctl ctl--danger" id="pDelV">Delete pitch ' + esc(cur.label) + "</button>") : "") +
+    '<span style="flex:1"></span>' + (d.campaigns.length > 1 ? '<button class="linkbtn danger" id="pDel">Delete campaign</button>' : "") + "</div></div></div>" +
+    '<div><div class="head" style="margin-bottom:12px"><div><h2 class="sec">Preview · pitch ' + esc(cur.label) + '</h2></div><div class="inline"><input class="search" style="min-width:150px;padding-left:11px;background-image:none" id="pvDomain" value="delfi.lv"><select class="ctl" id="pvLang"><option value="">English</option><option value="lv">Latvian</option><option value="de">German</option><option value="lt">Lithuanian</option><option value="et">Estonian</option><option value="nl">Dutch</option><option value="pl">Polish</option><option value="el">Greek</option></select></div></div><div class="preview"><div class="ph" id="pvSubj">…</div><iframe id="pvFrame" title="Preview"></iframe></div></div></div>';
   const preview = async () => {
     $("#pvSubj").innerHTML = '<span class="spin"></span>';
     try {
-      const p = await api("/api/preview/" + camp.id + "?domain=" + encodeURIComponent($("#pvDomain").value) + "&lang=" + $("#pvLang").value);
+      const p = await api("/api/preview/" + camp.id + "?pitch=" + cur.id + "&domain=" + encodeURIComponent($("#pvDomain").value) + "&lang=" + $("#pvLang").value);
       $("#pvSubj").textContent = "Subject: " + p.subject; $("#pvFrame").srcdoc = p.html;
     } catch (e) { $("#pvSubj").textContent = e.message; }
   };
-  $("#pSave").onclick = async () => {
-    try { await api("/api/campaigns/" + camp.id, { method: "PUT", body: { name: $("#pName").value, subject: $("#pSubj").value, body: $("#pBody").value } }); toast("Pitch saved"); await refresh(); preview(); }
-    catch (e) { toast(e.message); }
+  const dirty = () => $("#pSubj").value !== cur.subject || $("#pBody").value !== cur.body;
+  const save = async (quiet) => {
+    if ($("#pName").value.trim() !== camp.name) await api("/api/campaigns/" + camp.id, { method: "PUT", body: { name: $("#pName").value } });
+    if (dirty()) await api("/api/pitches/" + cur.id, { method: "PUT", body: { subject: $("#pSubj").value, body: $("#pBody").value } });
+    if (!quiet) toast("Pitch " + cur.label + " saved");
   };
+  $("#pSave").onclick = async () => { try { await save(); await refresh(); renderPitch(); } catch (e) { toast(e.message); } };
+  $$("[data-pv]", v).forEach((b) => (b.onclick = async () => {
+    const id = Number(b.dataset.pv); if (id === cur.id) return;
+    if (dirty() && confirm("Save the changes to pitch " + cur.label + " first?")) { try { await save(true); } catch (e) { toast(e.message); return; } }
+    S.pitch = id; renderPitch();
+  }));
+  $("#pAdd").onclick = async () => {
+    try { if (dirty()) await save(true); const r = await api("/api/campaigns/" + camp.id + "/pitches", { body: { copy: cur.id } }); S.pitch = r.id; toast("Pitch " + r.pitches.find((p) => p.id === r.id).label + " added - change it, then save"); renderPitch(); } catch (e) { toast(e.message); }
+  };
+  if ($("#pToggle")) $("#pToggle").onclick = async () => { try { await api("/api/pitches/" + cur.id, { method: "PUT", body: { active: !cur.active } }); toast(cur.active ? "Pitch " + cur.label + " is off - it won't be sent any more" : "Pitch " + cur.label + " is on"); renderPitch(); } catch (e) { toast(e.message, 5000); } };
+  if ($("#pDelV")) $("#pDelV").onclick = async () => { if (!confirm("Delete pitch " + cur.label + "?")) return; try { await api("/api/pitches/" + cur.id, { method: "DELETE" }); S.pitch = null; toast("Pitch deleted"); renderPitch(); } catch (e) { toast(e.message, 5000); } };
   if ($("#pDel")) $("#pDel").onclick = async () => {
     if (!confirm("Delete this campaign? Its websites move to the first campaign.")) return;
-    try { await api("/api/campaigns/" + camp.id, { method: "DELETE" }); S.campaign = 0; store.set("almo-campaign", "0"); toast("Campaign deleted"); await refresh(); renderPitch(); } catch (e) { toast(e.message); }
+    try { await api("/api/campaigns/" + camp.id, { method: "DELETE" }); S.campaign = 0; S.pitch = null; store.set("almo-campaign", "0"); toast("Campaign deleted"); await refresh(); renderPitch(); } catch (e) { toast(e.message); }
   };
   $$("[data-ins]").forEach((c) => (c.onclick = () => { const t = $("#pBody"); const p = t.selectionStart; t.value = t.value.slice(0, p) + c.dataset.ins + t.value.slice(t.selectionEnd); t.focus(); }));
   $("#pvLang").onchange = preview; $("#pvDomain").onchange = preview;
@@ -462,13 +498,8 @@ function renderSettings() {
   const help = { Gmail: "https://myaccount.google.com/apppasswords", Fastmail: "https://app.fastmail.com/settings/security/apppasswords" };
   const card = (id, title, sub, body) => '<div class="card" id="' + id + '"><div class="card-head"><div><h2 class="sec">' + title + "</h2>" + (sub ? "<p>" + sub + "</p>" : "") + "</div></div>" + body + "</div>";
   v.innerHTML = '<div style="max-width:760px">' +
-    card("account", "Email", "Use an app password, not your normal password.",
-      '<div class="seg" id="prov" style="margin-bottom:18px">' + ["Gmail", "Fastmail", "Other"].map((p) => '<button data-p="' + p + '" class="' + (st.provider === p ? "is-on" : "") + '">' + p + "</button>").join("") + "</div>" +
-      '<div class="form-grid"><div class="fld"><span class="label">Email address</span><input data-k="email" type="email" value="' + esc(st.email) + '" placeholder="you@uprankd.com"></div>' +
-      '<div class="fld"><span class="label">App password</span><input data-k="email_password" type="password" placeholder="' + (st.email_password_set ? "Saved" : "xxxx xxxx xxxx xxxx") + '">' + (help[st.provider] ? '<span class="hint"><a href="' + help[st.provider] + '" target="_blank" rel="noopener">Get one ↗</a></span>' : "") + "</div>" +
-      (st.provider === "Other" ? '<div class="fld"><span class="label">SMTP server</span><input data-k="smtp_host" value="' + esc(st.smtp_host) + '"></div>' + num("smtp_port", "SMTP port") + '<div class="fld"><span class="label">IMAP server</span><input data-k="imap_host" value="' + esc(st.imap_host) + '"></div>' + num("imap_port", "IMAP port") : "") +
-      '<div class="fld"><span class="label">Your name</span><input data-k="sender_name" value="' + esc(st.sender_name) + '" placeholder="Kristiāns Safronovs"></div><div class="fld"><span class="label">Job title</span><input data-k="sender_title" value="' + esc(st.sender_title) + '"></div>' +
-      '</div><div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl" data-test="email">Save and test</button><span class="result" id="r-email"></span></div>') +
+    card("account", "Mailboxes", "Pitches are shared evenly between active mailboxes, each within its own daily limit. Replies and follow-ups always stay in the mailbox that started the conversation.",
+      '<div id="boxes">' + boxList(st) + "</div>") +
     card("ai", "AI", "Reads websites and replies, pulls out the prices and writes follow-ups. Pick one.",
       '<div class="seg" id="aiprov" style="margin-bottom:18px">' + [["anthropic", "Claude"], ["openai", "OpenAI"], ["gemini", "Gemini"]].map(([k, l]) => '<button data-aip="' + k + '" class="' + ((st.ai_provider || "anthropic") === k ? "is-on" : "") + '">' + l + "</button>").join("") + "</div>" +
       (() => { const P = { anthropic: ["Anthropic API key", "anthropic_key", "sk-ant-…", "https://console.anthropic.com/settings/keys"], openai: ["OpenAI API key", "openai_key", "sk-…", "https://platform.openai.com/api-keys"], gemini: ["Gemini API key", "gemini_key", "AIza…", "https://aistudio.google.com/apikey"] }[st.ai_provider || "anthropic"];
@@ -479,7 +510,7 @@ function renderSettings() {
         .map(([k, t, p]) => '<button class="mode' + (st.send_mode === k ? " is-on" : "") + '" data-mode="' + k + '"><b><span class="dot' + (k === "live" ? " on" : k === "test" ? " warn" : "") + '"></span>' + t + "</b><p>" + p + "</p></button>").join("") + "</div>") +
     '<details class="card" id="auto"><summary class="sec" style="cursor:pointer">Advanced</summary><div style="margin-top:14px">' +
       sw("check_sites", "Skip sites that don't publish articles") + sw("translate", "Translate the pitch to the site's language") + sw("auto_followup", "Reply automatically when details are missing") +
-      '<div class="form-grid" style="margin-top:18px">' + num("daily_limit", "Max emails per day") + num("nudge_days", "Reminder after (days)", "0 = no reminder") +
+      '<div class="form-grid" style="margin-top:18px">' + num("daily_limit", "Default daily limit", "For new mailboxes") + num("nudge_days", "Reminder after (days)", "0 = no reminder") +
       '<div class="fld"><span class="label">Pause between emails (sec)</span><div class="inline"><input data-k="gap_min" value="' + st.gap_min + '"><span class="dim">–</span><input data-k="gap_max" value="' + st.gap_max + '"></div></div>' +
       '<div class="fld"><span class="label">Sending hours</span><div class="inline"><input data-k="work_start" value="' + st.work_start + '"><span class="dim">–</span><input data-k="work_end" value="' + st.work_end + '"></div></div>' +
       num("inbox_every_min", "Check inbox every (min)") + '<div class="fld"><span class="label">Company</span><input data-k="company" value="' + esc(st.company) + '"></div>' +
@@ -490,6 +521,81 @@ function renderSettings() {
   if (hash && $("#" + hash)) setTimeout(() => $("#" + hash).scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   $$("[data-k]", v).forEach((el) => (el.oninput = () => { S.settingsDirty = true; $("#saveNote").textContent = "Unsaved changes"; }));
 }
+/* mailboxes */
+const BOX_HELP = { Gmail: "Google account → Security → App passwords", Fastmail: "Settings → Privacy & Security → App passwords", Zoho: "Zoho account → Security → App passwords. Servers: Zoho Mail → Settings → Mail accounts → IMAP" };
+function boxList(st) {
+  const w = (S.data && S.data.worker && S.data.worker.mailboxes) || [];
+  const by = Object.fromEntries(w.map((x) => [x.id, x]));
+  const rows = (st.mailboxes || []).map((b) => {
+    const ws = by[b.id] || {}, err = ws.send_error || ws.inbox_error;
+    if (S.boxEdit === b.id) return boxForm(st, b);
+    return '<div class="box' + (b.active ? "" : " off") + '"><span class="dot ' + (err ? "bad" : !b.ready ? "warn" : b.active ? "on" : "") + '"></span>' +
+      '<div class="grow"><b>' + esc(b.email) + '</b><span class="muted">' + esc(b.provider) + (b.sender_name ? " · " + esc(b.sender_name) : "") + (b.active ? "" : " · paused") + (!b.ready ? " · needs " + (b.password_set ? "a sender name" : "an app password") : "") + "</span>" +
+      (err ? '<span class="bad small">' + esc(err) + "</span>" : "") + "</div>" +
+      '<div class="today"><b>' + fmt(ws.sent_today || 0) + "</b><span>/ " + fmt(b.daily_limit) + " today</span></div>" +
+      '<span class="result" id="r-box-' + b.id + '"></span>' +
+      '<button class="ctl ctl--tiny" data-box="test" data-id="' + b.id + '">Test</button><button class="ctl ctl--tiny" data-box="toggle" data-id="' + b.id + '">' + (b.active ? "Pause" : "Resume") + '</button><button class="ctl ctl--tiny" data-box="edit" data-id="' + b.id + '">Edit</button><button class="ctl ctl--tiny ctl--icon ctl--danger" data-box="remove" data-id="' + b.id + '" title="Remove">' + icon("close") + "</button></div>";
+  }).join("");
+  const empty = !(st.mailboxes || []).length ? '<p class="small" style="margin:0 0 14px">No mailbox yet. Add the one Almo should send from - you can add more any time.</p>' : "";
+  return empty + rows + (S.boxEdit === "new" ? boxForm(st, null) : '<button class="ctl" data-box="new" style="margin-top:' + (rows ? 14 : 0) + 'px">' + icon("plus") + "Add mailbox</button>");
+}
+function boxForm(st, b) {
+  const prov = S.boxProv || (b && b.provider) || "Gmail", P = st.providers[prov];
+  const v = (k, d) => esc(b && b[k] != null && b[k] !== "" ? b[k] : d == null ? "" : d);
+  const servers = !P || P.editable;
+  const def = P ? { smtp_host: P.smtp[0], smtp_port: P.smtp[1], imap_host: P.imap[0], imap_port: P.imap[1] } : { smtp_port: 465, imap_port: 993 };
+  const sv = (k) => (b && b.provider === prov && b[k] ? esc(b[k]) : esc(def[k] == null ? "" : def[k]));
+  return '<div class="boxform" id="boxForm" data-id="' + (b ? b.id : "") + '"><div class="seg" id="boxProv" style="margin-bottom:16px">' + ["Gmail", "Fastmail", "Zoho", "Other"].map((p) => '<button data-bp="' + p + '" class="' + (prov === p ? "is-on" : "") + '">' + p + "</button>").join("") + "</div>" +
+    '<div class="form-grid"><div class="fld"><span class="label">Email address</span><input data-b="email" type="email" value="' + v("email") + '" placeholder="name@uprankd.com"></div>' +
+    '<div class="fld"><span class="label">App password</span><input data-b="password" type="password" placeholder="' + (b && b.password_set ? "Saved - leave empty to keep" : "xxxx xxxx xxxx xxxx") + '">' + (P ? '<span class="hint"><a href="' + P.help + '" target="_blank" rel="noopener">Get one ↗</a> ' + esc(BOX_HELP[prov] || "") + "</span>" : '<span class="hint">Not your normal password</span>') + "</div>" +
+    '<div class="fld"><span class="label">Sender name</span><input data-b="sender_name" value="' + v("sender_name", st.sender_name) + '" placeholder="Kristiāns Safronovs"></div>' +
+    '<div class="fld"><span class="label">Job title</span><input data-b="sender_title" value="' + v("sender_title", st.sender_title || "Outreach Specialist") + '"></div>' +
+    '<div class="fld"><span class="label">Max emails per day</span><input data-b="daily_limit" inputmode="numeric" value="' + v("daily_limit", st.daily_limit) + '"><span class="hint">New mailboxes: start at 20–30 and raise slowly</span></div><div></div>' +
+    (servers ? '<div class="fld"><span class="label">SMTP server</span><input data-b="smtp_host" value="' + sv("smtp_host") + '"></div><div class="fld"><span class="label">SMTP port</span><input data-b="smtp_port" inputmode="numeric" value="' + sv("smtp_port") + '"></div>' +
+      '<div class="fld"><span class="label">IMAP server</span><input data-b="imap_host" value="' + sv("imap_host") + '"></div><div class="fld"><span class="label">IMAP port</span><input data-b="imap_port" inputmode="numeric" value="' + sv("imap_port") + '"></div>' : "") +
+    (prov === "Zoho" ? '<div class="fld full"><span class="hint">Paid Zoho accounts on your own domain use smtppro / imappro. For a zoho.com account (not EU), change .eu to .com.</span></div>' : "") +
+    '</div><div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl ctl--primary" data-box="save">' + (b ? "Save" : "Add and test") + '</button><button class="ctl" data-box="cancel">Cancel</button><span class="result" id="r-boxform"></span></div></div>';
+}
+function rerenderBoxes() { const el = $("#boxes"); if (el) el.innerHTML = boxList(S.data.settings); }
+async function boxAction(a, id, t) {
+  if (a === "new") { S.boxEdit = "new"; S.boxProv = "Gmail"; rerenderBoxes(); setTimeout(() => $('[data-b="email"]') && $('[data-b="email"]').focus(), 30); return; }
+  if (a === "edit") { S.boxEdit = id; S.boxProv = null; rerenderBoxes(); return; }
+  if (a === "cancel") { S.boxEdit = null; S.boxProv = null; rerenderBoxes(); return; }
+  const box = (S.data.settings.mailboxes || []).find((b) => b.id === id);
+  if (a === "save") {
+    const f = $("#boxForm"), body = { provider: S.boxProv || (box && box.provider) || "Gmail" };
+    $$("[data-b]", f).forEach((el) => { if (el.dataset.b !== "password" || el.value) body[el.dataset.b] = el.value.trim(); });
+    const editId = Number(f.dataset.id) || null;
+    $("#r-boxform").innerHTML = '<span class="spin"></span> Saving…';
+    try {
+      const r = await api(editId ? "/api/mailboxes/" + editId : "/api/mailboxes", { method: editId ? "PUT" : "POST", body });
+      S.data.settings.mailboxes = r.mailboxes; S.boxEdit = null; S.boxProv = null; rerenderBoxes();
+      const newId = editId || r.id;
+      toast(editId ? "Mailbox saved" : "Mailbox added - testing…");
+      boxAction("test", newId);
+      refresh();
+    } catch (e) { $("#r-boxform").innerHTML = '<span class="bad">' + esc(e.message) + "</span>"; }
+    return;
+  }
+  if (a === "test") {
+    const out = $("#r-box-" + id); if (out) out.innerHTML = '<span class="spin"></span>';
+    try {
+      const r = await api("/api/test/email", { body: { id } });
+      if (out) out.innerHTML = r.ok ? '<span class="good">✓ Connected</span>' : '<span class="bad">' + esc(r.error) + "</span>";
+      if (!r.ok && !out) toast(r.error, 6000);
+    } catch (e) { if (out) out.innerHTML = '<span class="bad">' + esc(e.message) + "</span>"; }
+    return;
+  }
+  if (a === "toggle") {
+    try { const r = await api("/api/mailboxes/" + id, { method: "PUT", body: { active: !box.active } }); S.data.settings.mailboxes = r.mailboxes; rerenderBoxes(); toast(box.active ? "Paused - it still answers its own conversations" : "Mailbox resumed"); refresh(); } catch (e) { toast(e.message); }
+    return;
+  }
+  if (a === "remove") {
+    if (!confirm("Remove " + box.email + " from Almo?\n\nNothing is deleted from the mailbox itself. Conversations it started will continue from another mailbox.")) return;
+    try { const r = await api("/api/mailboxes/" + id, { method: "DELETE" }); S.data.settings.mailboxes = r.mailboxes; rerenderBoxes(); toast("Mailbox removed"); refresh(); } catch (e) { toast(e.message); }
+  }
+}
+
 function collectSettings() {
   const out = {};
   $$("[data-k]").forEach((el) => {
@@ -513,6 +619,43 @@ async function saveSettings(quiet) {
   if (!quiet) toast("Settings saved");
   refresh();
   return true;
+}
+
+/* ------------------------------------------------------------------ export */
+const EXP = { q: "", kind: store.get("almo-exp-kind") || "full" };
+function openExport(q, what) {
+  EXP.q = q || ""; EXP.what = what || "";
+  $("#expWhat").textContent = EXP.what || (S.campaign ? "Websites in this campaign" : "All websites in outreach");
+  $("#expMarkup").value = store.get("almo-markup") || "30";
+  $("#expMargin").value = store.get("almo-margin") || "0";
+  $("#expSpecial").checked = store.get("almo-exp-special") === "1";
+  renderExport();
+  $("#expModal").classList.add("open"); $("#scrim").classList.add("open");
+  api("/api/export/count?" + EXP.q).then((c) => { EXP.count = c; renderExport(); }).catch(() => {});
+}
+function closeExport() { $("#expModal").classList.remove("open"); if (!S.drawer && !$("#addModal").classList.contains("open")) $("#scrim").classList.remove("open"); }
+const clientPrice = (p, mu, mg) => Math.ceil(Math.round((p * (1 + mu / 100) + mg) * 1e6) / 1e6);
+function renderExport() {
+  $$("#expKind button").forEach((b) => b.classList.toggle("is-on", b.dataset.ek === EXP.kind));
+  const client = EXP.kind === "client";
+  $("#expClient").hidden = !client;
+  $("#expFullNote").hidden = client;
+  const mu = parseFloat(($("#expMarkup").value || "0").replace(",", ".")) || 0, mg = parseFloat(($("#expMargin").value || "0").replace(",", ".")) || 0;
+  const c = EXP.count, ex = c && c.sample.length ? c.sample.slice(0, 3) : [{ domain: "example.lv", price: 100 }];
+  $("#expExample").innerHTML = ex.map((r) => '<div class="exrow"><span>' + esc(r.domain) + '</span><span class="muted">€' + fmt(r.price) + '</span><span class="arrow">→</span><b>€' + fmt(clientPrice(Number(r.price), mu, mg)) + "</b></div>").join("");
+  $("#expInfo").textContent = !c ? "" : client ? fmt(c.priced) + " of " + fmt(c.total) + " have a price and go in the list" : fmt(c.total) + " website" + (c.total === 1 ? "" : "s");
+  $("#expGo").disabled = !!(c && (client ? !c.priced : !c.total));
+}
+function downloadExport() {
+  const client = EXP.kind === "client";
+  let url = "/api/export?" + EXP.q;
+  if (client) {
+    const mu = $("#expMarkup").value.replace(",", ".") || "0", mg = $("#expMargin").value.replace(",", ".") || "0";
+    store.set("almo-markup", mu); store.set("almo-margin", mg); store.set("almo-exp-special", $("#expSpecial").checked ? "1" : "0");
+    url += "&client=1&markup=" + encodeURIComponent(mu) + "&margin=" + encodeURIComponent(mg) + ($("#expSpecial").checked ? "&special=1" : "");
+  }
+  store.set("almo-exp-kind", EXP.kind);
+  location.href = url; closeExport(); toast(client ? "Price list downloading" : "Export downloading");
 }
 
 /* ------------------------------------------------------------------ add websites */
@@ -549,6 +692,7 @@ const TITLES = { overview: "Overview", database: "Website database", websites: "
 function route() {
   if (/^#\/prices/.test(location.hash)) { DBF.stage = "priced"; saveDBF(); location.replace("#/database"); return; }
   if ($("#addModal").classList.contains("open")) closeAdd();
+  if ($("#expModal").classList.contains("open")) closeExport();
   if (S.drawer) closeDrawer();
   const h = location.hash.replace(/^#\/?/, "");
   const [path, qs] = h.split("#")[0].split("?");
@@ -565,7 +709,7 @@ function route() {
   else if (["websites", "attention"].includes(S.route)) { sitesShell(); loadSites(); }
   else if (S.route === "database") { if (S.prevRoute !== "database") resetDBF(); dbShell(); loadDB(); }
   else if (S.route === "pitch") renderPitch();
-  else if (S.route === "settings") renderSettings();
+  else if (S.route === "settings") { S.boxEdit = null; S.boxProv = null; renderSettings(); }
   $(".content").scrollTop = 0;
   S.prevRoute = S.route;
 }
@@ -573,9 +717,10 @@ function statusToTab(s) { for (const [k, v] of Object.entries({ progress: ["queu
 
 /* ------------------------------------------------------------------ events */
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-niche],[data-stage],[data-sort],[data-page],[data-sel],#selAll,[data-bulk],[data-dbclear]");
-  if (!t || !t.closest("#view, #bulk")) return;
+  const t = e.target.closest("[data-niche],[data-stage],[data-sort],[data-page],[data-sel],#selAll,[data-bulk],[data-dbclear],[data-copy]");
+  if (!t || !t.closest("#view, #bulk, #drawer")) return;
   e.stopPropagation();
+  if (t.dataset.copy) { copyText(t.dataset.copy).then(() => { toast("Copied " + t.dataset.copy); t.classList.add("done"); setTimeout(() => t.classList.remove("done"), 1200); }); return; }
   if (t.dataset.niche) { const k = t.dataset.niche, i = DBF.niches.indexOf(k); if (i < 0) DBF.niches.push(k); else DBF.niches.splice(i, 1); DBF.page = 0; saveDBF(); renderChips(); loadDB(); }
   else if (t.dataset.stage != null) { DBF.stage = t.dataset.stage; DBF.page = 0; saveDBF(); loadDB(); }
   else if (t.dataset.sort) { DBF.dir = DBF.sort === t.dataset.sort && DBF.dir === "desc" ? "asc" : "desc"; if (DBF.sort !== t.dataset.sort && ["domain", "country", "status", "email"].includes(t.dataset.sort)) DBF.dir = "asc"; DBF.sort = t.dataset.sort; DBF.page = 0; saveDBF(); loadDB(); }
@@ -589,7 +734,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { const q = $("#dbq") || $("#q"); if (q) { e.preventDefault(); q.focus(); } }
 });
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-go],[data-site],[data-f],[data-act],[data-sa],[data-close],[data-close-drawer],[data-mode],[data-p],[data-aip],[data-sw],[data-test],[data-c]");
+  const t = e.target.closest("[data-go],[data-site],[data-f],[data-act],[data-sa],[data-close],[data-close-drawer],[data-mode],[data-box],[data-bp],[data-aip],[data-sw],[data-test],[data-c]");
   if (!t) { if (!e.target.closest("#campMenu")) $("#campMenu").classList.remove("open"); return; }
   if (t.dataset.go) { if (t.dataset.go === "add") openAdd(); else location.hash = t.dataset.go; return; }
   if (t.dataset.site) { openSite(Number(t.dataset.site)); return; }
@@ -618,7 +763,11 @@ document.addEventListener("click", async (e) => {
     await refresh(); renderSettings(); return;
   }
   if (t.dataset.aip) { const vals = collectSettings(); vals.ai_provider = t.dataset.aip; await api("/api/settings", { body: vals }); await refresh(); renderSettings(); setTimeout(() => $("#ai") && $("#ai").scrollIntoView({ block: "center" }), 30); return; }
-  if (t.dataset.p) { const vals = collectSettings(); vals.provider = t.dataset.p; await api("/api/settings", { body: vals }); await refresh(); renderSettings(); return; }
+  if (t.dataset.box) { boxAction(t.dataset.box, Number(t.dataset.id) || null, t); return; }
+  if (t.dataset.bp) {
+    const f = $("#boxForm"), keep = {}; $$("[data-b]", f).forEach((el) => { if (!/host|port/.test(el.dataset.b)) keep[el.dataset.b] = el.value; });
+    S.boxProv = t.dataset.bp; rerenderBoxes(); Object.entries(keep).forEach(([k, val]) => { const el = $('[data-b="' + k + '"]'); if (el) el.value = val; }); return;
+  }
   if (t.dataset.sw) { t.classList.toggle("on"); S.settingsDirty = true; $("#saveNote").textContent = "Unsaved changes"; return; }
   if (t.dataset.test) {
     const which = t.dataset.test, out = $("#r-" + which);
@@ -640,8 +789,13 @@ $("#addCampaign").onclick = async () => {
   await refresh(); location.hash = "#/pitch"; route(); toast("Campaign created - write its pitch");
 };
 $("#addBtn").onclick = openAdd;
-$("#scrim").onclick = () => { closeAdd(); closeDrawer(); };
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeAdd(); closeDrawer(); } });
+$("#exportBtn").onclick = (e) => { e.preventDefault(); openExport(campQ(), S.campaign ? "Websites in this campaign" : "All websites in outreach"); };
+$$("#expKind button").forEach((b) => (b.onclick = () => { EXP.kind = b.dataset.ek; renderExport(); }));
+["#expMarkup", "#expMargin"].forEach((id) => ($(id).oninput = renderExport));
+$("#expGo").onclick = downloadExport;
+document.addEventListener("click", (e) => { if (e.target.closest("[data-close-exp]")) closeExport(); });
+$("#scrim").onclick = () => { closeAdd(); closeDrawer(); closeExport(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeAdd(); closeDrawer(); closeExport(); } });
 $("#siteText").oninput = () => { clearTimeout(previewAdd._t); previewAdd._t = setTimeout(previewAdd, 250); };
 $("#fileIn").onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
 const drop = $("#drop");

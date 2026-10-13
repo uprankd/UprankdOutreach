@@ -6,10 +6,12 @@ anything as read: messages are fetched with BODY.PEEK and remembered by
 Message-ID in the local database.
 """
 
+import base64
 import email
 import email.utils
 import html
 import imaplib
+import os
 import re
 import smtplib
 import ssl
@@ -46,13 +48,35 @@ def _friendly(exc, what):
 # --------------------------------------------------------------------------- #
 # Sending
 # --------------------------------------------------------------------------- #
-def signature_html(cfg):
+LOGO_CID = "uprankd-logo"
+LOGO_PNG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "web", "email-logo.png")
+
+
+def _embed_logo(cfg):
+    """SVG logos are blank in Gmail and Outlook, so an .svg logo (the default
+    https://uprankd.com/logo.svg) is sent as the bundled PNG inside the email."""
+    logo = (cfg.get("logo_url") or "").strip()
+    return bool(logo) and logo.lower().split("?")[0].endswith(".svg") and os.path.isfile(LOGO_PNG)
+
+
+def logo_data_uri():
+    with open(LOGO_PNG, "rb") as f:
+        return "data:image/png;base64," + base64.b64encode(f.read()).decode()
+
+
+def signature_html(cfg, logo_src=None):
     lines = [x for x in (cfg.get("sender_name"), cfg.get("sender_title"),
                          cfg.get("company")) if x]
     sig = "<br><br>".join(html.escape(x) for x in lines)
     logo = cfg.get("logo_url") or ""
-    img = ('<img src="%s" width="45" style="display:block;margin-bottom:15px;'
-           'border-radius:8px;">' % html.escape(logo, quote=True)) if logo else ""
+    if _embed_logo(cfg):
+        src = logo_src or ("cid:" + LOGO_CID)
+        img = ('<img src="%s" width="140" height="24" alt="Uprankd" style="display:block;'
+               'margin-bottom:15px;border:0;width:140px;height:24px;">' % html.escape(src, quote=True))
+    else:
+        img = ('<img src="%s" width="45" alt="" style="display:block;margin-bottom:15px;'
+               'border-radius:8px;">' % html.escape(logo, quote=True)) if logo else ""
     return (
         '<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,'
         'sans-serif;font-size:13px;color:#000000;"><tr>'
@@ -69,7 +93,7 @@ def signature_text(cfg):
 
 
 def build_message(cfg, to_addr, subject, body, in_reply_to="", references="",
-                  with_signature=True, quote=None):
+                  with_signature=True, quote=None, logo_src=None):
     """A proper multipart email: plain text + HTML, Date, Message-ID."""
     msg = EmailMessage()
     sender = cfg["email"]
@@ -86,7 +110,7 @@ def build_message(cfg, to_addr, subject, body, in_reply_to="", references="",
     html_body = "<p>%s</p>" % html.escape(text).replace("\n", "<br>")
     if with_signature:
         text += "\n\n" + signature_text(cfg)
-        html_body += "<br>" + signature_html(cfg)
+        html_body += "<br>" + signature_html(cfg, logo_src)
     if quote:
         q_from, q_date, q_body = quote
         text += "\n\nOn %s, %s wrote:\n%s" % (q_date, q_from, "\n".join(
@@ -99,6 +123,10 @@ def build_message(cfg, to_addr, subject, body, in_reply_to="", references="",
     msg.add_alternative(
         '<html><body style="font-family:Arial,sans-serif;font-size:14px;color:#333333;">'
         '%s</body></html>' % html_body, subtype="html")
+    if with_signature and not logo_src and _embed_logo(cfg):
+        with open(LOGO_PNG, "rb") as f:
+            msg.get_body(("html",)).add_related(f.read(), "image", "png", cid="<%s>" % LOGO_CID,
+                                                 disposition="inline", filename="uprankd.png")
     return msg
 
 

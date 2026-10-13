@@ -1,6 +1,7 @@
 """Results as an Excel file. Always a fresh file the app owns - it never edits
 your master database, so there's nothing to break or overwrite."""
 
+import math
 import os
 import tempfile
 from datetime import datetime
@@ -41,6 +42,63 @@ def rows(campaign_id=None, only=None, ids=None):
     return out
 
 
+def client_price(price, markup=0.0, margin=0.0):
+    """Our cost + markup % + a fixed margin, rounded up to whole euros.
+    None when the cost isn't a number."""
+    try:
+        cost = float(str(price).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+    if cost <= 0:
+        return None
+    return int(math.ceil(round(cost * (1 + float(markup or 0) / 100.0) + float(margin or 0), 6)))
+
+
+def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False):
+    out = []
+    for r in rows(campaign_id, "prices", ids):
+        price = client_price(r["price"], markup, margin)
+        if price is None:
+            continue
+        row = {"domain": r["domain"], "price": price, "requirements": r.get("requirements") or ""}
+        if special:
+            row["special"] = client_price(r.get("special_price"), markup, margin) or ""
+        out.append(row)
+    return out
+
+
+def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False):
+    """A price list to send to a client: website, client price, requirements.
+    No costs, emails or internal notes."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    cols = [("Website", "domain", 30), ("Price (EUR)", "price", 13)]
+    if special:
+        cols.append(("Casino / crypto / loan price (EUR)", "special", 18))
+    cols.append(("Requirements", "requirements", 60))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Price list"
+    ws.append([c[0] for c in cols])
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="060B70")
+        cell.alignment = Alignment(vertical="center")
+    for r in client_rows(campaign_id, ids, markup, margin, special):
+        ws.append([r.get(k, "") for _l, k, _w in cols])
+    for i, (_l, _k, width) in enumerate(cols, start=1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = width
+        for row in ws.iter_rows(min_row=2, min_col=i, max_col=i):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=_k == "requirements", vertical="top")
+                if _k in ("price", "special"):
+                    cell.number_format = '#,##0" €"'
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    return _save(wb, path)
+
+
 def write(path, campaign_id=None, only=None, ids=None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -66,7 +124,10 @@ def write(path, campaign_id=None, only=None, ids=None):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = width
     ws.freeze_panes = "B2"
     ws.auto_filter.ref = ws.dimensions
+    return _save(wb, path)
 
+
+def _save(wb, path):
     path = os.path.expanduser(path)
     folder = os.path.dirname(os.path.abspath(path)) or "."
     os.makedirs(folder, exist_ok=True)

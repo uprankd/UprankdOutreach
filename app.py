@@ -279,10 +279,11 @@ def state():
 
     cfg = settings.load()
     missing = settings.ready_to_send(cfg)
+    boxes = settings.public_mailboxes()
     setup = [
-        {"key": "account", "label": "Connect your email", "done": not any(
-            m in missing for m in ("your email address", "an app password"))},
-        {"key": "name", "label": "Add your name for the signature", "done": bool(cfg.get("sender_name"))},
+        {"key": "account", "label": "Connect a mailbox", "done": any(b["password_set"] for b in boxes)},
+        {"key": "name", "label": "Add your name for the signature",
+         "done": any(b["sender_name"] for b in boxes)},
         {"key": "ai", "label": "Add an AI key", "done": ai_mod.make(cfg) is not None},
         {"key": "sites", "label": "Add websites", "done": total("1=1") > 0},
         {"key": "send", "label": "Turn on sending", "done": cfg["send_mode"] != "off"},
@@ -465,9 +466,15 @@ def preview(cid):
     cfg = settings.load()
     site = {"campaign_id": cid, "domain": request.args.get("domain") or "example.lv",
             "language": request.args.get("lang") or ""}
-    subject, body = worker.compose_pitch(cfg, site)
+    pitch = None
+    if request.args.get("pitch"):
+        pitch = db.one("SELECT * FROM pitches WHERE id=?", (int(request.args["pitch"]),))
+    subject, body = worker.compose_pitch(cfg, site, pitch)
+    boxes = settings.mailboxes(with_secrets=False)
+    if boxes:
+        cfg = settings.box_cfg(cfg, boxes[0])
     msg = mail.build_message({**cfg, "email": cfg.get("email") or "you@example.com"},
-                             "them@" + site["domain"], subject, body)
+                             "them@" + site["domain"], subject, body, logo_src=mail.logo_data_uri())
     html_part = msg.get_body(("html",)).get_content()
     return jsonify({"subject": subject, "html": html_part})
 
@@ -481,16 +488,63 @@ def get_settings():
 @app.post("/api/settings")
 def post_settings():
     problems = settings.save(request.json or {})
-    worker._smtp = None if hasattr(worker, "_smtp") else None
-    worker.poke()
+    worker.reset_connections()
     return jsonify({"ok": not problems, "problems": problems, "settings": settings.public()})
+
+
+@app.get("/api/mailboxes")
+def list_mailboxes():
+    return jsonify({"mailboxes": settings.public_mailboxes(), "providers": _providers()})
+
+
+def _providers():
+    return {k: {"smtp": v["smtp"], "imap": v["imap"], "help": v["help"],
+                "editable": bool(v.get("editable"))} for k, v in settings.PROVIDERS.items()}
+
+
+@app.post("/api/mailboxes")
+def add_mailbox():
+    box_id, problems = settings.save_mailbox(request.json or {})
+    if problems:
+        return jsonify({"error": "; ".join(problems)}), 400
+    db.log("info", "Mailbox added: %s" % settings.mailbox(box_id)["email"])
+    worker.reset_connections()
+    return jsonify({"ok": True, "id": box_id, "mailboxes": settings.public_mailboxes()})
+
+
+@app.put("/api/mailboxes/<int:box_id>")
+def edit_mailbox(box_id):
+    if not settings.mailbox(box_id):
+        return jsonify({"error": "Not found"}), 404
+    _, problems = settings.save_mailbox(request.json or {}, box_id)
+    if problems:
+        return jsonify({"error": "; ".join(problems)}), 400
+    worker.reset_connections()
+    return jsonify({"ok": True, "mailboxes": settings.public_mailboxes()})
+
+
+@app.delete("/api/mailboxes/<int:box_id>")
+def remove_mailbox(box_id):
+    box = settings.mailbox(box_id)
+    if not box:
+        return jsonify({"error": "Not found"}), 404
+    open_threads = db.one("SELECT COUNT(*) AS n FROM sites WHERE mailbox_id=? AND status IN "
+                          "('waiting','followed_up','replied','needs_you')", (box_id,))["n"]
+    settings.delete_mailbox(box_id)
+    db.log("info", "Mailbox removed: %s" % box["email"])
+    worker.reset_connections()
+    return jsonify({"ok": True, "open_threads": open_threads, "mailboxes": settings.public_mailboxes()})
 
 
 @app.post("/api/test/email")
 def test_email():
-    cfg = settings.load()
-    if not cfg.get("email") or not cfg.get("email_password"):
-        return jsonify({"ok": False, "error": "Enter your email and app password first"})
+    data = request.json or {}
+    box = settings.mailbox(int(data.get("id") or 0)) if data.get("id") else None
+    if not box:
+        return jsonify({"ok": False, "error": "Save the mailbox first"})
+    if not box.get("password"):
+        return jsonify({"ok": False, "error": "Enter the app password first"})
+    cfg = settings.box_cfg(settings.load(), box)
     try:
         mail.test_send(cfg)
         mail.test_read(cfg)
@@ -518,11 +572,74 @@ def test_ai():
 def new_campaign():
     data = request.json or {}
     name = (data.get("name") or "").strip() or "New campaign"
-    base = db.one("SELECT subject, body FROM campaigns ORDER BY id LIMIT 1")
+    base = db.one("SELECT subject, body FROM pitches ORDER BY id LIMIT 1") or \
+        {"subject": db.DEFAULT_SUBJECT, "body": db.DEFAULT_BODY}
     with db.tx() as conn:
         cid = db.insert(conn, "INSERT INTO campaigns (name, subject, body, created_at) VALUES (?,?,?,?)",
                         (name, base["subject"], base["body"], time.time()))
+        conn.execute("INSERT INTO pitches (campaign_id, label, subject, body, active, created_at) "
+                     "VALUES (?,?,?,?,1,?)", (cid, "A", base["subject"], base["body"], time.time()))
     return jsonify({"id": cid})
+
+
+# --------------------------------------------------------------------------- #
+# Pitch variants (A/B testing)
+# --------------------------------------------------------------------------- #
+@app.get("/api/campaigns/<int:cid>/pitches")
+def list_pitches(cid):
+    return jsonify({"pitches": db.pitches(cid)})
+
+
+@app.post("/api/campaigns/<int:cid>/pitches")
+def add_pitch(cid):
+    if not db.one("SELECT id FROM campaigns WHERE id=?", (cid,)):
+        return jsonify({"error": "Not found"}), 404
+    data = request.json or {}
+    have = [p["label"] for p in db.pitches(cid)]
+    label = next(c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if c not in have) if len(have) < 26 else str(len(have) + 1)
+    src = db.one("SELECT subject, body FROM pitches WHERE id=?", (int(data.get("copy") or 0),)) or \
+        (db.pitches(cid) or [{"subject": db.DEFAULT_SUBJECT, "body": db.DEFAULT_BODY}])[0]
+    with db.tx() as conn:
+        pid = db.insert(conn, "INSERT INTO pitches (campaign_id, label, subject, body, active, created_at) "
+                        "VALUES (?,?,?,?,1,?)", (cid, label, src["subject"], src["body"], time.time()))
+    return jsonify({"ok": True, "id": pid, "pitches": db.pitches(cid)})
+
+
+@app.put("/api/pitches/<int:pid>")
+def edit_pitch(pid):
+    p = db.one("SELECT * FROM pitches WHERE id=?", (pid,))
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    data = request.json or {}
+    fields = {k: (data[k] or "").strip() for k in ("subject", "body") if k in data}
+    if any(not v for v in fields.values()):
+        return jsonify({"error": "Subject and message can't be empty"}), 400
+    if "active" in data:
+        fields["active"] = 1 if data["active"] else 0
+        if not data["active"] and not db.one("SELECT 1 AS x FROM pitches WHERE campaign_id=? AND id<>? "
+                                             "AND active=1", (p["campaign_id"], pid)):
+            return jsonify({"error": "At least one pitch has to stay on"}), 400
+    if fields:
+        with db.tx() as conn:
+            conn.execute("UPDATE pitches SET %s WHERE id=?" % ", ".join("%s=?" % k for k in fields),
+                         (*fields.values(), pid))
+    return jsonify({"ok": True, "pitches": db.pitches(p["campaign_id"])})
+
+
+@app.delete("/api/pitches/<int:pid>")
+def delete_pitch(pid):
+    p = db.one("SELECT * FROM pitches WHERE id=?", (pid,))
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    if db.one("SELECT 1 AS x FROM sites WHERE pitch_id=? AND sent_at IS NOT NULL LIMIT 1", (pid,)):
+        return jsonify({"error": "Pitch %s has been sent already - turn it off instead, so its "
+                                 "results stay" % p["label"]}), 400
+    if len(db.pitches(p["campaign_id"])) <= 1:
+        return jsonify({"error": "A campaign needs at least one pitch"}), 400
+    with db.tx() as conn:
+        conn.execute("DELETE FROM pitches WHERE id=?", (pid,))
+        conn.execute("UPDATE sites SET pitch_id=NULL WHERE pitch_id=?", (pid,))
+    return jsonify({"ok": True, "pitches": db.pitches(p["campaign_id"])})
 
 
 @app.put("/api/campaigns/<int:cid>")
@@ -546,6 +663,7 @@ def delete_campaign(cid):
     first = db.one("SELECT id FROM campaigns WHERE id<>? ORDER BY id", (cid,))["id"]
     with db.tx() as conn:
         conn.execute("UPDATE sites SET campaign_id=? WHERE campaign_id=?", (first, cid))
+        conn.execute("UPDATE pitches SET active=0, campaign_id=? WHERE campaign_id=?", (-cid, cid))
         conn.execute("DELETE FROM campaigns WHERE id=?", (cid,))
     return jsonify({"ok": True, "moved_to": first})
 
@@ -578,7 +696,7 @@ SORTS = {
     "domain": "domain", "country": "country", "status": "status", "updated": "updated_at",
     "price": "num(price)", "special": "num(special_price)",
     "dr": "num(dr)", "traffic": "num(REPLACE(traffic,',',''))",
-    "link": "link_insertion", "email": "email",
+    "link": "link_insertion", "email": "email", "sponsored": "sponsored_tag",
 }
 NUM = "num(price)"
 
@@ -624,7 +742,7 @@ def db_list():
     direction = "ASC" if a.get("dir") == "asc" else "DESC"
     per = max(25, min(2000, int(a.get("per") or 2000)))
     page = max(0, int(a.get("page") or 0))
-    text_sort = sort in ("domain", "country", "status", "link_insertion", "email")
+    text_sort = sort in ("domain", "country", "status", "link_insertion", "email", "sponsored_tag")
     nulls = "(%s IS NULL OR %s='')" % (sort, sort) if text_sort else "%s IS NULL" % sort
     rows = db.query("SELECT id, domain, country, email, status, price, special_price, casino, loan, "
                     "crypto, adult, sponsored_tag, link_insertion, requirements, dr, traffic, "
@@ -695,6 +813,22 @@ def db_bulk():
     worker.poke()
     return jsonify({"ok": True, "count": n})
 
+@app.get("/api/export/count")
+def export_count():
+    """How many websites an export would hold, and how many have a price."""
+    camp = _campaign_arg()
+    ids = None
+    if request.args.get("db"):
+        where, args = db_where(request.args)
+        ids = [r["id"] for r in db.query("SELECT id FROM sites WHERE %s" % where, tuple(args))]
+    if request.args.get("ids"):
+        ids = [int(x) for x in request.args["ids"].split(",") if x.strip().isdigit()]
+    all_rows = exporter.rows(camp, None, ids)
+    sample = exporter.client_rows(camp, ids, 0, 0)
+    return jsonify({"total": len(all_rows), "priced": len(sample),
+                    "sample": [{"domain": r["domain"], "price": r["price"]} for r in sample[:3]]})
+
+
 @app.get("/api/export")
 def export():
     camp = _campaign_arg()
@@ -706,6 +840,16 @@ def export():
         ids = [r["id"] for r in db.query("SELECT id FROM sites WHERE %s" % where, tuple(args))]
     if request.args.get("ids"):
         ids = [int(x) for x in request.args["ids"].split(",") if x.strip().isdigit()]
+    if request.args.get("client"):
+        def _num(key):
+            try:
+                return float(str(request.args.get(key) or 0).replace(",", "."))
+            except ValueError:
+                return 0.0
+        exporter.write_client(buf_path, camp, ids, _num("markup"), _num("margin"),
+                              bool(request.args.get("special")))
+        name = "Uprankd price list %s.xlsx" % datetime.now().strftime("%Y-%m-%d")
+        return send_file(buf_path, as_attachment=True, download_name=name)
     exporter.write(buf_path, camp, only, ids)
     name = "Almo %s %s.xlsx" % ("prices" if only == "prices" else "websites" if ids is not None else "results",
                                 datetime.now().strftime("%Y-%m-%d"))

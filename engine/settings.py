@@ -1,6 +1,8 @@
 """App settings with sensible defaults. Passwords and keys go to the system
 keychain (macOS Keychain / Windows Credential Manager) when available."""
 
+import time
+
 import db
 
 SECRET_KEYS = ("email_password", "anthropic_key", "openai_key", "gemini_key")
@@ -18,8 +20,10 @@ DEFAULTS = {
     "sender_name": "",
     "sender_title": "Outreach Specialist",
     "company": "SIA Uprankd",
-    "logo_url": ("https://encrypted-tbn0.gstatic.com/images?q=tbn:AND9GcSj_J7eoaaf"
-                 "C3ooB5otb0EKdktJqbzYmFyBxILNlK3xwbwJCvly-XYViTQs&s=10"),
+    # Email apps don't show SVG, so the signature carries a PNG copy of this
+    # logo inside the email itself (web/email-logo.png). Any PNG/JPG URL here
+    # is linked instead.
+    "logo_url": "https://uprankd.com/logo.svg",
     # Automation
     "send_mode": "off",               # off | test | live
     "running": True,
@@ -55,6 +59,10 @@ PROVIDERS = {
               "help": "https://myaccount.google.com/apppasswords"},
     "Fastmail": {"smtp": ("smtp.fastmail.com", 465), "imap": ("imap.fastmail.com", 993),
                  "help": "https://app.fastmail.com/settings/security/apppasswords"},
+    # Paid Zoho organisation accounts (you@yourdomain) use the *pro hosts; the
+    # exact ones are under Zoho Mail > Settings > Mail Accounts > IMAP.
+    "Zoho": {"smtp": ("smtppro.zoho.eu", 465), "imap": ("imappro.zoho.eu", 993),
+             "help": "https://accounts.zoho.eu/home#security/app_password", "editable": True},
 }
 
 
@@ -102,6 +110,8 @@ def load(with_secrets=True):
     stored = db.get_settings()
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in stored.items() if not k.startswith("_")})
+    if "encrypted-tbn0.gstatic.com" in (cfg.get("logo_url") or ""):
+        cfg["logo_url"] = DEFAULTS["logo_url"]     # the old app's placeholder logo
     if with_secrets:
         for key in SECRET_KEYS:
             cfg[key] = get_secret(key)
@@ -119,6 +129,9 @@ def public():
         cfg[key + "_set"] = bool(cfg.pop(key))
     cfg["ai_key_set"] = cfg.get((cfg.get("ai_provider") or "anthropic") + "_key_set", False)
     cfg["database"] = db.describe()
+    cfg["mailboxes"] = public_mailboxes()
+    cfg["providers"] = {k: {"smtp": v["smtp"], "imap": v["imap"], "help": v["help"],
+                            "editable": bool(v.get("editable"))} for k, v in PROVIDERS.items()}
     return cfg
 
 
@@ -164,13 +177,143 @@ def save(values):
 
 def ready_to_send(cfg):
     """What's missing before mail can go out, in plain words."""
-    missing = []
+    boxes = mailboxes()
+    if not boxes:
+        return ["a sending mailbox"]
+    if not any(b["active"] for b in boxes):
+        return ["an active mailbox"]
+    if not any(box_ready(b) for b in boxes if b["active"]):
+        return ["a mailbox with an app password and a sender name"]
+    return []
+
+
+# --------------------------------------------------------------------------- #
+# Sending mailboxes - pitches are spread across all active ones
+# --------------------------------------------------------------------------- #
+BOX_FIELDS = ("label", "provider", "email", "smtp_host", "smtp_port", "imap_host",
+              "imap_port", "sender_name", "sender_title", "daily_limit", "active")
+
+
+def _box_secret(box_id):
+    return "mailbox_%d" % int(box_id)
+
+
+def mailboxes(active_only=False, with_secrets=True):
+    rows = db.query("SELECT * FROM mailboxes%s ORDER BY id" % (" WHERE active=1" if active_only else ""))
+    for r in rows:
+        r["active"] = bool(r["active"])
+        if with_secrets:
+            r["password"] = get_secret(_box_secret(r["id"]))
+    return rows
+
+
+def mailbox(box_id):
+    for b in mailboxes():
+        if b["id"] == box_id:
+            return b
+    return None
+
+
+def box_ready(box):
+    return bool(box.get("email") and box.get("password") and box.get("sender_name")
+                and box.get("smtp_host") and box.get("imap_host"))
+
+
+def box_cfg(cfg, box):
+    """The settings to send as this mailbox (mail.py reads these keys)."""
+    out = dict(cfg)
+    out.update(email=box["email"], email_password=box.get("password", ""),
+               smtp_host=box["smtp_host"], smtp_port=int(box["smtp_port"] or 465),
+               imap_host=box["imap_host"], imap_port=int(box["imap_port"] or 993),
+               sender_name=box.get("sender_name") or "",
+               sender_title=box.get("sender_title") or cfg.get("sender_title", ""),
+               mailbox_id=box["id"])
+    return out
+
+
+def public_mailboxes():
+    out = []
+    for b in mailboxes():
+        b["password_set"] = bool(b.pop("password"))
+        b["ready"] = b["password_set"] and bool(b["email"] and b["sender_name"])
+        out.append(b)
+    return out
+
+
+def save_mailbox(values, box_id=None):
+    """Create or update a mailbox. Returns (id, problems)."""
+    clean, problems = {}, []
+    for key in BOX_FIELDS:
+        if key not in values:
+            continue
+        v = values[key]
+        if key in ("smtp_port", "imap_port", "daily_limit"):
+            try:
+                v = int(str(v).strip())
+                if v < 0:
+                    raise ValueError
+            except ValueError:
+                problems.append("%s must be a whole number" % key.replace("_", " "))
+                continue
+        elif key == "active":
+            v = 1 if v else 0
+        else:
+            v = str(v or "").strip()
+        clean[key] = v
+    if "email" in clean:
+        clean["email"] = clean["email"].lower()
+        if "@" not in clean["email"]:
+            problems.append("Enter the mailbox's email address")
+    p = PROVIDERS.get(clean.get("provider", ""))
+    if p:
+        # Fixed servers for Gmail/Fastmail; Zoho only fills them in when empty.
+        if not p.get("editable") or not clean.get("smtp_host"):
+            clean["smtp_host"], clean["smtp_port"] = p["smtp"]
+        if not p.get("editable") or not clean.get("imap_host"):
+            clean["imap_host"], clean["imap_port"] = p["imap"]
+    if problems:
+        return box_id, problems
+    with db.tx() as conn:
+        if box_id:
+            if clean:
+                conn.execute("UPDATE mailboxes SET %s WHERE id=?" % ", ".join("%s=?" % k for k in clean),
+                             (*clean.values(), box_id))
+        else:
+            if not clean.get("email"):
+                return None, ["Enter the mailbox's email address"]
+            if conn.execute("SELECT 1 AS x FROM mailboxes WHERE email=?", (clean["email"],)).fetchone():
+                return None, ["%s is already added" % clean["email"]]
+            clean.setdefault("daily_limit", int(load(False).get("daily_limit") or 40))
+            box_id = db.insert(conn, "INSERT INTO mailboxes (%s, created_at) VALUES (%s)" % (
+                ", ".join(clean), ",".join("?" * (len(clean) + 1))), (*clean.values(), time.time()))
+    pw = values.get("password")
+    if pw:
+        set_secret(_box_secret(box_id), str(pw).strip().replace(" ", ""))
+    return box_id, []
+
+
+def delete_mailbox(box_id):
+    set_secret(_box_secret(box_id), "")
+    with db.tx() as conn:
+        conn.execute("DELETE FROM mailboxes WHERE id=?", (box_id,))
+
+
+def migrate_mailbox():
+    """Older versions had one mailbox in the settings - make it mailbox #1."""
+    if db.one("SELECT 1 AS x FROM mailboxes LIMIT 1"):
+        return
+    cfg = load()
     if not cfg.get("email"):
-        missing.append("your email address")
-    if not cfg.get("email_password"):
-        missing.append("an app password")
-    if not cfg.get("sender_name"):
-        missing.append("your name for the signature")
-    if not cfg.get("smtp_host") or not cfg.get("imap_host"):
-        missing.append("mail server addresses")
-    return missing
+        return
+    box_id, _ = save_mailbox({
+        "label": cfg.get("sender_name") or cfg["email"], "provider": cfg.get("provider") or "Other",
+        "email": cfg["email"], "smtp_host": cfg.get("smtp_host"), "smtp_port": cfg.get("smtp_port"),
+        "imap_host": cfg.get("imap_host"), "imap_port": cfg.get("imap_port"),
+        "sender_name": cfg.get("sender_name"), "sender_title": cfg.get("sender_title"),
+        "daily_limit": cfg.get("daily_limit"), "active": True,
+        "password": cfg.get("email_password") or "",
+    })
+    if box_id:
+        with db.tx() as conn:
+            conn.execute("UPDATE sites SET mailbox_id=? WHERE mailbox_id IS NULL AND sent_at IS NOT NULL",
+                         (box_id,))

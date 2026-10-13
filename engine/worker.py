@@ -58,8 +58,11 @@ class Worker:
         self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="read")
         self.reading = set()
         self.lock = threading.Lock()
-        self.next_send_at = 0
-        self.last_inbox = 0
+        self.next_send_at = {}        # mailbox id -> earliest next send
+        self.last_sent = {}           # mailbox id -> when it last sent
+        self.last_inbox = {}          # mailbox id -> last inbox check
+        self.box_errors = {}          # mailbox id -> {"send": .., "inbox": ..}
+        self._smtp = {}
         self.inbox_error = ""
         self.send_error = ""
         self.ai_error = ""
@@ -84,7 +87,14 @@ class Worker:
         self.wake.set()
 
     def check_inbox_now(self):
-        self.last_inbox = 0
+        self.last_inbox = {}
+        self.poke()
+
+    def reset_connections(self):
+        for s in list(self._smtp.values()):
+            s.close()
+        self._smtp = {}
+        self.box_errors = {}
         self.poke()
 
     def _loop(self):
@@ -100,9 +110,11 @@ class Worker:
         cfg = settings.load()
         if cfg.get("running", True):
             self._stage_read(cfg)
-            if cfg["send_mode"] != "off" and not settings.ready_to_send(cfg):
-                self._stage_inbox(cfg)
-                self._stage_send(cfg)
+            if cfg["send_mode"] != "off":
+                boxes = self.boxes()
+                if boxes:
+                    self._stage_inbox(cfg, boxes)
+                    self._stage_send(cfg, boxes)
             self._stage_timeouts(cfg)
         self._stage_export(cfg)
 
@@ -199,58 +211,110 @@ class Worker:
     # ------------------------------------------------------------------ #
     # 2. Send: pitches, nudges - paced, capped, inside working hours
     # ------------------------------------------------------------------ #
-    def sent_today(self):
+    # Every mailbox with a password can read replies and continue its own
+    # conversations; only active ones take new pitches. Pitches rotate so each
+    # mailbox sends about the same number a day, each within its own limit.
+    def boxes(self):
+        return [b for b in settings.mailboxes() if settings.box_ready(b)]
+
+    def _box_for_site(self, site, boxes):
+        """The mailbox that wrote to this site - replies stay in one thread."""
+        for b in boxes:
+            if b["id"] == site.get("mailbox_id"):
+                return b
+        active = [b for b in boxes if b["active"]]
+        return active[0] if active else None
+
+    def _err(self, box, kind, text):
+        if box:
+            self.box_errors.setdefault(box["id"], {})[kind] = text
+        if kind == "send":
+            self.send_error = text
+        else:
+            self.inbox_error = text
+
+    def sent_today(self, address=None):
         start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-        row = db.one("SELECT COUNT(*) AS n FROM messages WHERE direction='out' AND ts>=?",
-                     (start,))
+        if address:
+            row = db.one("SELECT COUNT(*) AS n FROM messages WHERE direction='out' AND ts>=? "
+                         "AND lower(from_addr)=?", (start, address.lower()))
+        else:
+            row = db.one("SELECT COUNT(*) AS n FROM messages WHERE direction='out' AND ts>=?",
+                         (start,))
         return row["n"] if row else 0
 
-    def can_send_now(self, cfg):
-        test = cfg["send_mode"] == "test"
-        if time.time() < self.next_send_at:
-            return False, "pacing"
-        if self.sent_today() >= int(cfg["daily_limit"]):
-            return False, "daily limit reached"
+    def _in_hours(self, cfg):
+        if cfg["send_mode"] == "test":
+            return True
         hour = datetime.now().hour
-        if not test and not (int(cfg["work_start"]) <= hour < int(cfg["work_end"])):
+        return int(cfg["work_start"]) <= hour < int(cfg["work_end"])
+
+    def _box_free(self, box):
+        return time.time() >= self.next_send_at.get(box["id"], 0) and \
+            self.sent_today(box["email"]) < int(box.get("daily_limit") or 0)
+
+    def can_send_now(self, cfg, boxes=None):
+        boxes = self.boxes() if boxes is None else boxes
+        active = [b for b in boxes if b["active"]]
+        if not active:
+            return False, "no active mailbox"
+        if all(self.sent_today(b["email"]) >= int(b.get("daily_limit") or 0) for b in active):
+            return False, "daily limit reached"
+        if not self._in_hours(cfg):
             return False, "outside working hours"
+        if not any(self._box_free(b) for b in active):
+            return False, "pacing"
         return True, ""
 
-    def _schedule_next(self, cfg):
+    def _schedule_next(self, cfg, box):
         if cfg["send_mode"] == "test":
             gap = random.randint(5, 12)
         else:
             gap = random.randint(int(cfg["gap_min"]), max(int(cfg["gap_min"]), int(cfg["gap_max"])))
-        self.next_send_at = time.time() + gap
+        self.next_send_at[box["id"]] = time.time() + gap
+        self.last_sent[box["id"]] = time.time()
 
-    def _stage_send(self, cfg):
-        ok, _why = self.can_send_now(cfg)
-        if not ok:
+    def _stage_send(self, cfg, boxes):
+        if not self._in_hours(cfg):
             return
-        # Nudges first - they finish conversations that are already open.
-        due = self._due_nudge(cfg)
-        if due:
-            self._send_nudge(cfg, due)
-            self._schedule_next(cfg)
+        free = [b for b in boxes if self._box_free(b)]
+        if not free:
+            return
+        free_ids = {b["id"] for b in free}
+        # Reminders first - they finish conversations that are already open,
+        # always from the mailbox that started them.
+        for site in self._due_nudges(cfg):
+            box = self._box_for_site(site, boxes)
+            if box and box["id"] in free_ids:
+                self._send_nudge(settings.box_cfg(cfg, box), site)
+                self._schedule_next(cfg, box)
+                return
+        active = [b for b in free if b["active"]]
+        if not active:
             return
         rows = db.sites("status='ready'", (), "id ASC", 1)
         if rows:
-            self._send_pitch(cfg, rows[0])
-            self._schedule_next(cfg)
+            box = min(active, key=lambda b: (self.sent_today(b["email"]),
+                                             self.last_sent.get(b["id"], 0), b["id"]))
+            self._send_pitch(settings.box_cfg(cfg, box), rows[0])
+            self._schedule_next(cfg, box)
 
     def _sender(self, cfg):
-        s = getattr(self, "_smtp", None)
+        key = cfg.get("mailbox_id") or cfg["email"]
+        s = self._smtp.get(key)
         if s is None or s.cfg.get("email") != cfg["email"] or \
-                s.cfg.get("email_password") != cfg["email_password"]:
+                s.cfg.get("email_password") != cfg["email_password"] or \
+                s.cfg.get("smtp_host") != cfg["smtp_host"]:
             if s:
                 s.close()
             s = mail.Sender(cfg)
-            self._smtp = s
+            self._smtp[key] = s
         s.cfg = cfg
         return s
 
     def _deliver(self, cfg, site, subject, body, kind, reply_to=None):
-        """Send one message for a site and store it. Returns True on success."""
+        """Send one message for a site as cfg's mailbox and store it."""
+        box = {"id": cfg.get("mailbox_id")} if cfg.get("mailbox_id") else None
         test = cfg["send_mode"] == "test"
         to_addr = cfg["email"] if test else site["email"]
         shown_subject = ("[TEST → %s] " % site["domain"] + subject) if test and \
@@ -267,20 +331,24 @@ class Worker:
         try:
             self._sender(cfg).send(msg)
         except mail.MailError as exc:
-            self.send_error = str(exc)
-            db.log("error", "Couldn't send: %s" % exc, site["id"])
+            self._err(box, "send", "%s: %s" % (cfg["email"], exc))
+            db.log("error", "Couldn't send from %s: %s" % (cfg["email"], exc), site["id"])
             if "refused" in str(exc):
                 return self._bounce(site, "address refused", [])
             return False
-        self.send_error = ""
+        self._err(box, "send", "")
         db.add_message(site["id"], "out", kind, cfg["email"], to_addr, shown_subject, body,
                        msg["Message-ID"], test)
         return True
 
-    def compose_pitch(self, cfg, site):
-        camp = db.one("SELECT * FROM campaigns WHERE id=?", (site["campaign_id"],)) or \
-            db.one("SELECT * FROM campaigns ORDER BY id LIMIT 1")
-        subject, body = camp["subject"], camp["body"]
+    def compose_pitch(self, cfg, site, pitch=None):
+        if pitch is None and site.get("pitch_id"):
+            pitch = db.one("SELECT * FROM pitches WHERE id=?", (site["pitch_id"],))
+        if pitch is None:
+            camp = db.one("SELECT id FROM campaigns WHERE id=?", (site.get("campaign_id"),)) or \
+                db.one("SELECT id FROM campaigns ORDER BY id LIMIT 1")
+            pitch = db.pick_pitch(camp["id"])
+        subject, body = pitch["subject"], pitch["body"]
         lang = (site.get("language") or "").lower()
         if cfg.get("translate") and lang and lang != "en":
             client = self._ai(cfg)
@@ -296,27 +364,32 @@ class Worker:
     def _send_pitch(self, cfg, site):
         # Claim it first, so two computers on one shared database can never
         # both send the pitch.
-        if not db.claim(site["id"], "ready", "sending"):
+        if not db.claim_pitch(site["id"], cfg.get("mailbox_id")):
             return
-        subject, body = self.compose_pitch(cfg, site)
+        pitch = None
+        if site.get("pitch_id"):
+            pitch = db.one("SELECT * FROM pitches WHERE id=?", (site["pitch_id"],))
+        pitch = pitch or db.pick_pitch(site["campaign_id"]) or \
+            db.pick_pitch(db.one("SELECT id FROM campaigns ORDER BY id LIMIT 1")["id"])
+        subject, body = self.compose_pitch(cfg, site, pitch)
         if not self._deliver(cfg, site, subject, body, "pitch"):
             db.claim(site["id"], "sending", "ready")   # a bounce may have moved it on already
             return
         now = time.time()
         db.update_site(site["id"], status="waiting", subject=subject, sent_at=now,
-                       last_out_at=now, note="")
-        db.log("send", "Pitch sent to %s%s" % (
-            site["email"], " (test: to you)" if cfg["send_mode"] == "test" else ""), site["id"])
+                       last_out_at=now, note="", pitch_id=pitch["id"])
+        db.log("send", "Pitch %s sent to %s from %s%s" % (
+            pitch["label"], site["email"], cfg["email"],
+            " (test: to you)" if cfg["send_mode"] == "test" else ""), site["id"])
         self.dirty = True
 
-    def _due_nudge(self, cfg):
+    def _due_nudges(self, cfg):
         days = int(cfg["nudge_days"])
         if days <= 0:
-            return None
+            return []
         limit = time.time() - days * 86400
-        rows = db.sites("status IN ('waiting','followed_up') AND last_out_at<? AND nudges<?",
-                        (limit, int(cfg["max_nudges"])), "last_out_at ASC", 1)
-        return rows[0] if rows else None
+        return db.sites("status IN ('waiting','followed_up') AND last_out_at<? AND nudges<?",
+                        (limit, int(cfg["max_nudges"])), "last_out_at ASC", 20)
 
     def _send_nudge(self, cfg, site):
         body = NUDGE["en"]
@@ -357,41 +430,45 @@ class Worker:
     # ------------------------------------------------------------------ #
     # 3. Inbox: replies, bounces, out-of-office
     # ------------------------------------------------------------------ #
-    def _stage_inbox(self, cfg):
+    def _stage_inbox(self, cfg, boxes):
         every = max(int(cfg["inbox_every_min"]), 1) * 60
         if cfg["send_mode"] == "test":
             every = 60
-        if time.time() - self.last_inbox < every:
-            return
-        self.last_inbox = time.time()
-        if not db.one("SELECT 1 AS x FROM messages WHERE direction='out' LIMIT 1"):
-            return
-        try:
-            with mail.Inbox(cfg) as box:
-                known = lambda mid: db.was_seen(mid) or \
-                    db.site_for_message_ids([mid]) is not None
-                messages, skipped = box.new_messages(45, known, self._wanted(cfg))
-            self.inbox_error = ""
-            self.last_inbox_ok = time.time()
-        except mail.MailError as exc:
-            self.inbox_error = str(exc)
-            return
-        except Exception as exc:
-            self.inbox_error = "Reading mail: %s" % str(exc)[:160]
-            return
-        for mid in skipped:
-            db.mark_seen(mid)
-        for m in messages:
-            if not db.mark_seen(m["message_id"]):
-                continue          # another computer already handled it
+        own = {b["email"].lower() for b in boxes}
+        for box in boxes:
+            if time.time() - self.last_inbox.get(box["id"], 0) < every:
+                continue
+            self.last_inbox[box["id"]] = time.time()
+            if not db.one("SELECT 1 AS x FROM messages WHERE direction='out' AND lower(from_addr)=? "
+                          "LIMIT 1", (box["email"].lower(),)):
+                continue
+            bcfg = settings.box_cfg(cfg, box)
             try:
-                self._handle_incoming(cfg, m)
-            except Exception:
-                traceback.print_exc()
+                with mail.Inbox(bcfg) as inbox:
+                    known = lambda mid: db.was_seen(mid) or \
+                        db.site_for_message_ids([mid]) is not None
+                    messages, skipped = inbox.new_messages(45, known, self._wanted(bcfg, own))
+                self._err(box, "inbox", "")
+                self.last_inbox_ok = time.time()
+            except mail.MailError as exc:
+                self._err(box, "inbox", "%s: %s" % (box["email"], exc))
+                continue
+            except Exception as exc:
+                self._err(box, "inbox", "%s: reading mail: %s" % (box["email"], str(exc)[:160]))
+                continue
+            for mid in skipped:
+                db.mark_seen(mid)
+            for m in messages:
+                if not db.mark_seen(m["message_id"]):
+                    continue          # another computer already handled it
+                try:
+                    self._handle_incoming(bcfg, m, own)
+                except Exception:
+                    traceback.print_exc()
 
-    def _wanted(self, cfg):
+    def _wanted(self, cfg, own_set=None):
         """Decide from headers alone whether a message could be ours to read."""
-        own = cfg["email"].lower()
+        own = own_set or {cfg["email"].lower()}
         test = cfg["send_mode"] == "test"
         contacted = None
 
@@ -403,7 +480,7 @@ class Worker:
             if bounces._SYSTEM_SENDER.search(h["from"]) or \
                     bounces._FAILURE_SUBJECT.search(h["subject"] or ""):
                 return True
-            if sender == own and not test:
+            if sender in own and not test:
                 return False
             if contacted is None:
                 contacted = set()
@@ -418,8 +495,8 @@ class Worker:
             return any(".".join(parts[i:]) in contacted for i in range(len(parts) - 1))
         return wanted
 
-    def _match_site(self, cfg, m):
-        own = m["from_addr"] == cfg["email"].lower()
+    def _match_site(self, cfg, m, own_set=None):
+        own = m["from_addr"] in (own_set or {cfg["email"].lower()})
         sid = db.site_for_message_ids([m["in_reply_to"]] + m["references"])
         if sid:
             return db.get_site(sid)
@@ -441,8 +518,9 @@ class Worker:
                 return rows[0]
         return None
 
-    def _handle_incoming(self, cfg, m):
-        result = bounces.analyse(m, own_addresses=[cfg["email"]])
+    def _handle_incoming(self, cfg, m, own_set=None):
+        own_set = own_set or {cfg["email"].lower()}
+        result = bounces.analyse(m, own_addresses=sorted(own_set))
         if result:
             targets = []
             for addr in result["addresses"]:
@@ -466,10 +544,10 @@ class Worker:
                 self._bounce(site, result["reason"], result.get("others") or [])
             return
 
-        site = self._match_site(cfg, m)
+        site = self._match_site(cfg, m, own_set)
         if not site or not site.get("sent_at"):
             return
-        if m["from_addr"] == cfg["email"].lower() and cfg["send_mode"] != "test":
+        if m["from_addr"] in own_set and cfg["send_mode"] != "test":
             return
         db.add_message(site["id"], "in", "reply", m["from_addr"], m["to"], m["subject"],
                        m["body"], m["message_id"], ts=m["ts"])
@@ -545,8 +623,10 @@ class Worker:
             db.update_site(site_id, status="needs_you",
                            note="They sent a price list or link - open the email and fill in the prices")
             return
+        box = self._box_for_site(site, self.boxes())
+        sender_name = (box or {}).get("sender_name") or cfg.get("sender_name")
         try:
-            draft = client.followup(text, missing, cfg.get("sender_name"),
+            draft = client.followup(text, missing, sender_name,
                                     terms.get("language") or site.get("language") or "en")
         except ai_mod.AIError as exc:
             db.update_site(site_id, status="needs_you", note="Couldn't write the follow-up: %s" % exc)
@@ -560,6 +640,11 @@ class Worker:
 
     def send_followup(self, cfg, site_id, body):
         site = db.get_site(site_id)
+        box = self._box_for_site(site, self.boxes())
+        if not box:
+            self.send_error = "No mailbox to send from - add one in Settings"
+            return False
+        cfg = settings.box_cfg(cfg, box)
         incoming = [m for m in db.thread(site_id) if m["direction"] == "in" and m["kind"] == "reply"]
         ref = incoming[-1] if incoming else None
         subject = (ref["subject"] if ref else site["subject"]) or site["subject"]
@@ -586,14 +671,27 @@ class Worker:
             print("export failed:", exc)
 
     def status(self, cfg):
-        ok, why = self.can_send_now(cfg) if cfg["send_mode"] != "off" else (False, "")
+        boxes = self.boxes()
+        ok, why = self.can_send_now(cfg, boxes) if cfg["send_mode"] != "off" else (False, "")
+        active = [b for b in boxes if b["active"]]
+        waits = [max(0, int(self.next_send_at.get(b["id"], 0) - time.time())) for b in active]
+        per_box = []
+        for b in settings.mailboxes(with_secrets=False):
+            errs = self.box_errors.get(b["id"], {})
+            per_box.append({"id": b["id"], "email": b["email"], "sent_today": self.sent_today(b["email"]),
+                            "limit": b["daily_limit"], "active": b["active"],
+                            "send_error": errs.get("send", ""), "inbox_error": errs.get("inbox", "")})
+        send_errors = [p["send_error"] for p in per_box if p["send_error"]]
+        inbox_errors = [p["inbox_error"] for p in per_box if p["inbox_error"]]
         return {
-            "send_error": self.send_error,
-            "inbox_error": self.inbox_error,
+            "send_error": send_errors[0] if send_errors else "",
+            "inbox_error": inbox_errors[0] if inbox_errors else "",
             "ai_error": self.ai_error,
             "last_inbox_ok": self.last_inbox_ok,
             "sent_today": self.sent_today(),
-            "next_send_in": max(0, int(self.next_send_at - time.time())),
+            "daily_limit": sum(int(b["daily_limit"] or 0) for b in active),
+            "next_send_in": min(waits) if waits else 0,
             "send_wait": why,
             "reading": len(self.reading),
+            "mailboxes": per_box,
         }

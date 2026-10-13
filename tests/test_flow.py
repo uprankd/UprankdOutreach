@@ -113,8 +113,8 @@ def reply_to(msg, from_addr, body, subject=None):
 
 def run(w, n=6):
     for _ in range(n):
-        w.next_send_at = 0
-        w.last_inbox = 0
+        w.next_send_at = {}
+        w.last_inbox = {}
         w._tick()
         deadline = time.time() + 5
         while w.reading and time.time() < deadline:
@@ -136,7 +136,14 @@ def main():
     settings.save({"email": "me@uprankd.com", "email_password": "x", "sender_name": "Kristiāns",
                    "anthropic_key": "k", "send_mode": "live", "work_start": 0, "work_end": 24,
                    "results_path": os.path.join(TMP, "results.xlsx")})
+    settings.migrate_mailbox()
+    boxes = settings.mailboxes()
+    check(len(boxes) == 1 and boxes[0]["email"] == "me@uprankd.com" and boxes[0]["password"] == "x",
+          "the old single mailbox becomes mailbox #1 (with its password)")
+    check(settings.ready_to_send(settings.load()) == [], "ready to send with one mailbox")
     camp = db.one("SELECT id FROM campaigns")["id"]
+    check(len(db.pitches(camp)) == 1 and db.pitches(camp)[0]["label"] == "A",
+          "the campaign's email became pitch A")
     added, known = db.add_sites(camp, finder.parse_list(
         "https://www.news-one.lv/x\nshop-two.com, blog-three.de silent-four.com noemail-five.com news-one.lv"))
     check(len(added) == 5 and not known, "5 websites parsed and de-duplicated")
@@ -154,6 +161,10 @@ def main():
     check(pitch["Message-ID"] and pitch["Date"] and pitch.get_body(("plain",)) is not None,
           "pitch has Message-ID, Date and a plain-text part")
     check("Kristiāns" in pitch.get_body(("html",)).get_content(), "signature uses the sender's name")
+    parts = {p.get_content_type(): p for p in pitch.walk()}
+    check("image/png" in parts and parts["image/png"]["Content-ID"] == "<uprankd-logo>"
+          and "cid:uprankd-logo" in pitch.get_body(("html",)).get_content(),
+          "Uprankd logo travels inside the email as a PNG (SVG doesn't show in Gmail/Outlook)")
     b3 = status("blog-three.de")
     check(b3["status"] == "waiting" and b3["email"] == "redaktion@blog-three.de",
           "refused address replaced by the next one and sent")
@@ -215,9 +226,10 @@ def main():
           "unrelated newsletter skipped by headers only")
 
     # Daily limit
-    settings.save({"daily_limit": 0})
+    settings.save_mailbox({"daily_limit": 0}, boxes[0]["id"])
     ok, why = w.can_send_now(settings.load())
     check(not ok and "daily" in why, "daily limit stops sending")
+    settings.save_mailbox({"daily_limit": 40}, boxes[0]["id"])
 
     # Results file
     w.last_export = 0
@@ -230,7 +242,7 @@ def main():
     check(vals["news-one.lv"][3] == 150, "price is a number in Excel")
 
     # Test mode goes to me
-    settings.save({"send_mode": "test", "daily_limit": 40})
+    settings.save({"send_mode": "test"})
     db.add_sites(camp, ["fresh-six.lv"])
     SITES["fresh-six.lv"] = {"ok": True, "text": "news", "language": "en", "emails": ["info@fresh-six.lv"], "title": "x"}
     run(w, 4)
@@ -243,7 +255,7 @@ def main():
     sid = db.sites("domain='shared-seven.lv'")[0]["id"]
     db.update_site(sid, status="ready", email="info@shared-seven.lv", emails=["info@shared-seven.lv"])
     before = len([m for m in SENT if m["To"] == "info@shared-seven.lv"])
-    cfg = settings.load()
+    cfg = settings.box_cfg(settings.load(), settings.mailboxes()[0])
     site_row = db.get_site(sid)
     workers = [worker_mod.Worker(), worker_mod.Worker()]
     threads = [threading.Thread(target=x._send_pitch, args=(cfg, dict(site_row))) for x in workers]
@@ -254,6 +266,44 @@ def main():
           "two computers, one shared database: the pitch is sent once")
     check(db.mark_seen("<dup@x>") and not db.mark_seen("<dup@x>"),
           "a reply is handled by only one computer")
+
+    # A second mailbox (Zoho) and a second pitch (B): work is shared evenly
+    settings.save({"nudge_days": 0})
+    zid, problems = settings.save_mailbox({"provider": "Zoho", "email": "Team@Uprankd.com",
+                                           "password": "zz", "sender_name": "Anna", "label": "Zoho"})
+    zbox = settings.mailbox(zid)
+    check(not problems and zbox["smtp_host"] == "smtppro.zoho.eu" and zbox["email"] == "team@uprankd.com",
+          "Zoho mailbox added with Zoho's servers")
+    with db.tx() as conn:
+        db.insert(conn, "INSERT INTO pitches (campaign_id, label, subject, body, active, created_at) "
+                  "VALUES (?,?,?,?,1,?)", (camp, "B", "Quick question about {domain}", "Hi! Prices for {domain}?", time.time()))
+    names = ["ab-%d.lv" % i for i in range(8)]
+    db.add_sites(camp, names)
+    for d in names:
+        SITES[d] = {"ok": True, "text": "news", "language": "en", "emails": ["info@" + d], "title": "x"}
+    with db.tx() as conn:   # a new day: both mailboxes start from zero
+        conn.execute("UPDATE messages SET ts=ts-86400")
+    before = len(SENT)
+    run(w, 14)
+    batch = [m for m in SENT[before:] if m["To"].startswith("info@ab-")]
+    froms = [m["From"] for m in batch]
+    check(len(batch) == 8 and sum("team@uprankd.com" in f for f in froms) == 4,
+          "8 pitches shared 4/4 between the two mailboxes")
+    check("Anna" in batch[[i for i, f in enumerate(froms) if "team@" in f][0]].get_body(("html",)).get_content(),
+          "each mailbox signs with its own name")
+    variants = {p["label"]: p for p in db.pitches(camp)}
+    check(abs(variants["A"]["sent"] - variants["B"]["sent"]) <= 1 and variants["B"]["sent"] >= 4,
+          "pitch B catches up with A, then they alternate (A/B test stays balanced)")
+    zsite = [d for d in names if status(d)["mailbox_id"] == zid][0]
+    zmsg = [m for m in batch if m["To"] == "info@" + zsite][0]
+    reply_to(zmsg, "info@" + zsite, "Price is 99 EUR.")
+    run(w, 2)
+    fu = SENT[-1]
+    check(fu["To"] == "info@" + zsite and "team@uprankd.com" in fu["From"],
+          "the follow-up comes from the same mailbox as the pitch")
+    stats = {p["label"]: p for p in db.pitches(camp)}
+    check(sum(p["replies"] for p in stats.values()) >= 1 and all(p["sent"] for p in stats.values()),
+          "per-variant stats: sent and replies")
     print("\nAll checks passed.")
 
 

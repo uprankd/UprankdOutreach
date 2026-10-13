@@ -101,6 +101,15 @@ def _schema(kind):
         """CREATE TABLE IF NOT EXISTS events (
             id {ID}, ts {REAL} NOT NULL, site_id INTEGER, kind TEXT NOT NULL, text TEXT NOT NULL)""",
         "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        """CREATE TABLE IF NOT EXISTS mailboxes (
+            id {ID}, label TEXT DEFAULT '', provider TEXT DEFAULT 'Other', email TEXT NOT NULL,
+            smtp_host TEXT DEFAULT '', smtp_port INTEGER DEFAULT 465, imap_host TEXT DEFAULT '',
+            imap_port INTEGER DEFAULT 993, sender_name TEXT DEFAULT '',
+            sender_title TEXT DEFAULT '', daily_limit INTEGER DEFAULT 40,
+            active INTEGER DEFAULT 1, created_at {REAL} NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS pitches (
+            id {ID}, campaign_id INTEGER NOT NULL, label TEXT NOT NULL, subject TEXT NOT NULL,
+            body TEXT NOT NULL, active INTEGER DEFAULT 1, created_at {REAL} NOT NULL)""",
     )]
 
 
@@ -221,7 +230,8 @@ DEFAULT_BODY = (
 MIGRATIONS = {
     "sites": [("country", "TEXT DEFAULT ''"), ("source", "TEXT DEFAULT 'almo'"),
               ("dr", "TEXT DEFAULT ''"), ("traffic", "TEXT DEFAULT ''"),
-              ("contacted_before", "INTEGER DEFAULT 0")],
+              ("contacted_before", "INTEGER DEFAULT 0"), ("mailbox_id", "INTEGER"),
+              ("pitch_id", "INTEGER")],
 }
 
 
@@ -247,6 +257,16 @@ def init():
             conn.execute(
                 "INSERT INTO campaigns (name, subject, body, created_at) VALUES (?,?,?,?)",
                 ("General", DEFAULT_SUBJECT, DEFAULT_BODY, time.time()))
+        # Every campaign has at least one pitch (variant A) - older databases
+        # kept a single subject/body on the campaign itself.
+        for c in conn.execute("SELECT * FROM campaigns c WHERE NOT EXISTS "
+                              "(SELECT 1 FROM pitches p WHERE p.campaign_id=c.id)").fetchall():
+            c = dict(c)
+            conn.execute("INSERT INTO pitches (campaign_id, label, subject, body, active, created_at) "
+                         "VALUES (?,?,?,?,1,?)", (c["id"], "A", c["subject"], c["body"], time.time()))
+    import settings
+
+    settings.migrate_mailbox()
 
 
 # --------------------------------------------------------------------------- #
@@ -258,6 +278,7 @@ SITE_FIELDS = {
     "price", "special_price", "casino", "loan", "crypto", "adult", "sponsored_tag",
     "link_insertion", "requirements", "draft", "attempts", "next_try_at",
     "campaign_id", "country", "source", "dr", "traffic", "contacted_before",
+    "mailbox_id", "pitch_id",
 }
 
 
@@ -367,6 +388,39 @@ def claim(site_id, from_status, to_status):
         cur = conn.execute("UPDATE sites SET status=?, updated_at=? WHERE id=? AND status=?",
                            (to_status, time.time(), site_id, from_status))
         return cur.rowcount == 1
+
+
+def claim_pitch(site_id, mailbox_id):
+    """ready -> sending, and remember which mailbox writes to this site."""
+    with tx() as conn:
+        cur = conn.execute("UPDATE sites SET status='sending', mailbox_id=?, updated_at=? "
+                           "WHERE id=? AND status='ready'", (mailbox_id, time.time(), site_id))
+        return cur.rowcount == 1
+
+
+def pitches(campaign_id, active_only=False):
+    """A campaign's pitch variants with how each one is doing."""
+    rows = query(
+        "SELECT p.*, "
+        "(SELECT COUNT(*) FROM sites s WHERE s.pitch_id=p.id AND s.sent_at IS NOT NULL) AS sent, "
+        "(SELECT COUNT(*) FROM sites s WHERE s.pitch_id=p.id AND s.replied_at IS NOT NULL) AS replies, "
+        "(SELECT COUNT(*) FROM sites s WHERE s.pitch_id=p.id AND s.replied_at IS NOT NULL "
+        "  AND num(s.price) IS NOT NULL) AS prices "
+        "FROM pitches p WHERE p.campaign_id=?%s ORDER BY p.id" % (" AND p.active=1" if active_only else ""),
+        (campaign_id,))
+    for r in rows:
+        r["reply_rate"] = round(100.0 * r["replies"] / r["sent"]) if r["sent"] else None
+    return rows
+
+
+def pick_pitch(campaign_id):
+    """The active variant that has been sent least, so A/B stays balanced."""
+    rows = pitches(campaign_id, active_only=True)
+    if not rows:
+        rows = pitches(campaign_id)[:1]
+    if not rows:
+        return None
+    return min(rows, key=lambda r: (r["sent"], r["id"]))
 
 
 def claim_nudge(site_id, current, step=1):

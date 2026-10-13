@@ -67,6 +67,23 @@
   </div>
   <div class="modal-foot"><span class="grow" id="addInfo"></span><button class="ctl" data-close>Cancel</button><button class="ctl ctl--primary" id="addGo" disabled>Start</button></div>
 </div>
+<div class="modal" id="expModal" role="dialog" aria-modal="true" aria-labelledby="expTitle">
+  <div class="modal-head"><h2 class="sec" id="expTitle">Export</h2><div class="pagesub" id="expWhat"></div></div>
+  <div class="modal-body">
+    <div class="seg" id="expKind"><button data-ek="full">Full list</button><button data-ek="client">Price list for a client</button></div>
+    <p class="small" id="expFullNote" style="margin:16px 0 0">Everything Almo knows: our prices, emails, topics, status and notes. For us, not for clients.</p>
+    <div id="expClient" hidden>
+      <p class="small" style="margin:16px 0">Website, client price and requirements only - no costs, emails or notes. Websites without a price are left out.</p>
+      <div class="form-grid">
+        <div class="fld"><span class="label">Markup %</span><input id="expMarkup" inputmode="decimal" placeholder="30"><span class="hint">Added on top of our price</span></div>
+        <div class="fld"><span class="label">Margin € per website</span><input id="expMargin" inputmode="decimal" placeholder="0"><span class="hint">A fixed amount added after the markup</span></div>
+      </div>
+      <label class="check"><input type="checkbox" id="expSpecial"> Also include the casino / crypto / loan price</label>
+      <div class="example"><div class="label">Client price = our price × (1 + markup) + margin, rounded up</div><div id="expExample"></div></div>
+    </div>
+  </div>
+  <div class="modal-foot"><span class="grow" id="expInfo"></span><button class="ctl" data-close-exp>Cancel</button><button class="ctl ctl--primary" id="expGo">Download Excel</button></div>
+</div>
 <div class="toast" id="toast"></div>
 <script src="/web/app.js"></script>
 </body>
