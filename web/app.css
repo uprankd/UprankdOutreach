@@ -614,3 +614,32 @@ td.strong{color:var(--ink);font-weight:650}
 .box .dot{margin-right:-4px}
 .stats .fig{font-size:32px}
 #dbChips{align-items:center}
+
+/* ---------- favicons over letter tiles ---------- */
+.mono{position:relative;overflow:hidden}
+.mono img{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity .15s}
+.mono.has{background:transparent;color:transparent}
+.mono.has img{opacity:1}
+
+/* ---------- database table: fixed columns, spare width goes to Topics ---------- */
+.dbt.fixed{table-layout:fixed;min-width:1380px}
+.dbt.fixed td{overflow:hidden;text-overflow:ellipsis}
+.dbt.fixed td.email .addr{max-width:calc(100% - 30px)}
+.dbt.fixed .tcs{flex-wrap:wrap;row-gap:4px}
+
+/* ---------- detail panel ---------- */
+.dsub{display:flex;align-items:center;flex-wrap:wrap;gap:0 8px;color:var(--ink-3);font-size:var(--t-small)}
+.dsub .sep{font-style:normal;color:var(--ink-4)}
+.dsub .pill{font-size:var(--t-small)}
+.kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 32px}
+.kv-h{font-size:var(--t-small);font-weight:600;color:var(--ink);padding-bottom:8px;border-bottom:1px solid var(--rule)}
+.kv-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:var(--t-body)}
+.kv-row .k{color:var(--ink-3)}
+.kv-row .v{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.kv-row .v .tp,.kv-row .v .tag-s{font-size:var(--t-body)}
+.kv-row .v .tp.no,.kv-row .v .unk{font-weight:500}
+.dactions{margin-bottom:6px}
+@media (max-width:620px){.kv-grid{grid-template-columns:1fr}}
+.dbt.fixed{min-width:1440px}
+.dbt.fixed .tcs{flex-wrap:nowrap}
+.dactions{margin-bottom:26px}

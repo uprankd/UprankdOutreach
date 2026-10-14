@@ -263,7 +263,10 @@ async function loadSites() {
 /* ------------------------------------------------------------------ database */
 /* A letter tile per website - the same look on every row, no outside icon service. */
 const hue = (d) => { let h = 7; for (const c of d) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
-const fav = (d) => { const n = String(d || "").replace(/^www\./, ""); return '<span class="mono" style="--h:' + hue(n) + '" aria-hidden="true">' + esc((n[0] || "?").toUpperCase()) + "</span>"; };
+/* The site's own icon; its letter tile shows while loading and when it has none
+   (Google answers unknown sites with a 16px globe, so anything that small is skipped). */
+const fav = (d) => { const n = String(d || "").replace(/^www\./, ""); return '<span class="mono" style="--h:' + hue(n) + '" aria-hidden="true">' + esc((n[0] || "?").toUpperCase()) + '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(n) + '" onload="favOk(this)" onerror="this.remove()"></span>'; };
+window.favOk = (img) => { if (img.naturalWidth >= 32) img.parentNode.classList.add("has"); else img.remove(); };
 const yn = (v) => { const s = String(v || ""), l = s.toLowerCase(); return l === "yes" ? '<span class="yn y">Yes</span>' : l === "no" ? '<span class="yn n">No</span>' : !s || l === "unknown" ? '<span class="unk">–</span>' : '<span class="yn">' + esc(s) + "</span>"; };
 const eur = (v) => (numv(v) ? "€" + fmt(numv(v)) : '<span class="unk">–</span>');
 const linkIns = (v) => (numv(v) ? '<span class="tp ok">€' + fmt(numv(v)) + "</span>" : /^yes$/i.test(v || "") ? '<span class="tp ok">Yes</span>' : /^no$/i.test(v || "") ? '<span class="tp no">No</span>' : v ? '<span class="tp" title="' + esc(v) + '">' + esc(String(v).slice(0, 10)) + "</span>" : '<span class="unk">–</span>');
@@ -272,7 +275,7 @@ const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
 const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"]];
-const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
+const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
 const numv = (v) => { const n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) && n > 0 && /^\s*\d/.test(String(v)) ? n : null; };
 /* What a topic costs: its own price, else the special-topics price, else the normal price when they just said yes. */
 function topicPrice(r, k) {
@@ -361,12 +364,13 @@ async function loadDB() {
   const SORTABLE = ["domain", "country", "email", "price", "sponsored", "link", "dr", "traffic", "status"];
   const th = ([key, label, cls, tip]) => SORTABLE.includes(key) ? '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + (DBF.sort === key ? ' aria-sort="' + (DBF.dir === "asc" ? "ascending" : "descending") + '"' : "") + ">" + label + '<span class="arr">' + (DBF.sort === key ? (DBF.dir === "asc" ? "↑" : "↓") : "") + "</span></th>" : '<th class="' + (cls || "") + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + ">" + label + "</th>";
   const allOn = DB.rows.every((r) => DB.sel.has(r.id));
-  $("#dbTbl").innerHTML = '<table class="dbt"><thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
+  const colgroup = "<colgroup>" + [30, 220, 110, 230, 84, null, 84, 112, 56, 84, 130].map((w) => "<col" + (w ? ' style="width:' + w + 'px"' : "") + ">").join("") + "</colgroup>";
+  $("#dbTbl").innerHTML = '<table class="dbt fixed">' + colgroup + '<thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
       '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" +
       '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email) +
       '<td class="num strong">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td>" +
-      "<td>" + tagCell(r.sponsored_tag) + "</td><td>" + linkIns(r.link_insertion) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
+      "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
   $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
   renderBulk(); edgeHints();
@@ -433,9 +437,11 @@ async function openSite(id, quiet) {
   const fact = (label, v, cls) => '<div class="fact"><div class="label">' + label + '</div><div class="fv ' + (cls || "") + '">' + v + "</div></div>";
   const TERMS = ["price", "special_price", "link_insertion", "casino", "loan", "crypto", "adult", "sponsored_tag", "dr", "traffic"];
   const anyTerms = TERMS.some((k) => has(s[k]));
+  // Terms as two short lists - what an article costs, and which topics they take.
+  const kv = (label, value) => '<div class="kv-row"><span class="k">' + label + '</span><span class="v">' + value + "</span></div>";
   const facts = !anyTerms ? '<p class="small notes-empty">No terms yet - they fill in when the website replies, or add them with Edit.</p>'
-    : '<div class="facts">' + fact("Price", eur(s.price)) + fact("Special topics", eur(s.special_price)) + fact("Link insertion", linkIns(s.link_insertion)) + fact("DR", numCell(s.dr)) + fact("Traffic", numCell(s.traffic)) + "</div>" +
-      '<div class="facts">' + [["Casino", "casino"], ["Loans", "loan"], ["Crypto", "crypto"], ["Adult", "adult"]].map(([l, k]) => fact(l, topicCell(s, k))).join("") + fact("Sponsored", tagCell(s.sponsored_tag)) + "</div>";
+    : '<div class="kv-grid"><div><div class="kv-h">Prices</div>' + kv("Article", eur(s.price)) + kv("Special topics", eur(s.special_price)) + kv("Link insertion", linkIns(s.link_insertion)) + kv("Marked sponsored", tagCell(s.sponsored_tag)) +
+      '</div><div><div class="kv-h">Topics</div>' + TOPICS.map(([k, l]) => kv(l, topicCell(s, k))).join("") + "</div></div>";
   const topics = "";
   const inp = (label, key, ph) => '<div class="fld"><span class="label">' + label + '</span><input data-f="' + key + '" value="' + esc(has(s[key]) ? s[key] : "") + '" placeholder="' + (ph || "–") + '"></div>';
   const editForm = '<div class="form-grid compact">' + inp("Price €", "price", "€") + inp("Special topics €", "special_price", "€") + inp("Link insertion", "link_insertion", "Yes, No or €") + inp("Sponsored tag", "sponsored_tag", "Yes or No") + inp("Casino", "casino", "Yes, No or €") + inp("Loans", "loan", "Yes, No or €") + inp("Crypto", "crypto", "Yes, No or €") + inp("Adult", "adult", "Yes, No or €") + inp("Country", "country") + inp("DR", "dr") + inp("Traffic", "traffic") +
@@ -443,7 +449,7 @@ async function openSite(id, quiet) {
   const when = (ts) => new Date(ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   const lastIn = d.thread.filter((m) => m.direction === "in" && m.kind === "reply").slice(-1)[0];
   const thread = d.thread.length ? d.thread.slice().reverse().map((m, i) => '<details class="msg ' + m.direction + '"' + (i === 0 || m.direction === "in" ? " open" : "") + '><summary class="mh"><span><b>' + (m.direction === "out" ? "You" : esc(m.from_addr)) + '</b><span class="tag">' + esc({ pitch: "Pitch", reply: "Reply", followup: "Follow-up", nudge: "Reminder", bounce: "Bounce" }[m.kind] || m.kind) + "</span>" + (m.test ? '<span class="tag">Test</span>' : "") + "</span><span>" + new Date(m.ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + '</span></summary><div class="small" style="margin:8px 0 6px">' + esc(m.subject) + '</div><div class="mb">' + esc(m.body) + "</div></details>").join("") : '<p class="small">Almo hasn\'t written to this website yet.</p>';
-  dr.innerHTML = '<div class="drawer-head"><div class="grow"><h2 class="pagetitle dtitle">' + fav(s.domain) + esc(s.domain) + '</h2><div class="dsub">' + pill(s.status, d.statuses) + (s.country ? '<span class="muted">' + esc(s.country) + "</span>" : "") + '<a href="https://' + esc(s.domain) + '" target="_blank" rel="noopener">Open website' + icon("ext", "ext") + '</a></div></div><button class="ctl ctl--icon" data-close-drawer aria-label="Close">' + icon("close") + "</button></div>" +
+  dr.innerHTML = '<div class="drawer-head"><div class="grow"><h2 class="pagetitle dtitle">' + fav(s.domain) + esc(s.domain) + '</h2><div class="dsub">' + [pill(s.status, d.statuses), s.country ? esc(s.country) : "", numv(s.dr) ? "DR " + esc(s.dr) : "", numv(String(s.traffic || "").replace(/,/g, "")) ? numCell(s.traffic) + " visits" : ""].filter(Boolean).map((x) => "<span>" + x + "</span>").join('<i class="sep">·</i>') + '<i class="sep">·</i><a href="https://' + esc(s.domain) + '" target="_blank" rel="noopener">Open website' + icon("ext", "ext") + '</a></div></div><button class="ctl ctl--icon" data-close-drawer aria-label="Close">' + icon("close") + "</button></div>" +
     '<div class="drawer-body">' + (s.note ? '<div class="banner' + (["bounced", "error"].includes(s.status) ? " bad" : s.status === "needs_you" ? " warn" : "") + '"><div class="grow">' + esc(s.note) + "</div></div>" : "") +
     (primary ? '<div class="dactions">' + primary + "</div>" : "") +
     (s.draft ? '<section><div class="head"><h3 class="sec">Follow-up ready to send</h3></div>' + (lastIn ? '<div class="msg in quoted"><div class="mh"><span><b>' + esc(lastIn.from_addr) + '</b><span class="tag">Their reply</span></span><span>' + when(lastIn.ts) + '</span></div><div class="mb">' + esc(lastIn.body) + "</div></div>" : "") +
