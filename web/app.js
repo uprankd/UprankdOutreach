@@ -30,6 +30,7 @@ const I = {
   check: '<path d="m3.5 8.5 3 3 6-7"/>',
   more: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>',
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.8v2.9h2.9M8 5v3.2l2.2 1.4"/>',
+  note: '<path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3z"/><path d="M5.5 6.25h5M5.5 8.25h3"/>',
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   inbox: '<path d="M2 9.5 3.6 3.7a1 1 0 0 1 1-.7h6.8a1 1 0 0 1 1 .7L14 9.5V13H2V9.5Zm0 0h3.5l1 1.5h3l1-1.5H14"/>',
@@ -276,7 +277,7 @@ async function loadSites() {
       : '<div class="empty"><strong>' + (S.q || S.filter !== "all" ? "Nothing matches" : "No websites yet") + '</strong><button class="ctl ctl--primary" data-go="add">Add websites</button></div>';
   } else {
     html = '<table class="dbt ot"><thead><tr><th class="l">Website</th><th class="l">Email</th><th class="l">Status</th><th class="l">Details</th><th>Price</th><th>Contacted</th><th>Updated</th></tr></thead><tbody>' +
-      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + waitReason(r) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
+      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + noteMark(r) + "</span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + waitReason(r) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
   }
   $("#tbl").innerHTML = html;
 }
@@ -287,6 +288,7 @@ const hue = (d) => { let h = 7; for (const c of d) h = (h * 31 + c.charCodeAt(0)
 /* The site's own icon; its letter tile shows while loading and when it has none
    (Google answers unknown sites with a 16px globe, so anything that small is skipped). */
 const fav = (d) => { const n = String(d || "").replace(/^www\./, ""); return '<span class="mono" style="--h:' + hue(n) + '" aria-hidden="true">' + esc((n[0] || "?").toUpperCase()) + '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(n) + '" onload="favOk(this)" onerror="this.remove()"></span>'; };
+const noteMark = (r) => r.requirements ? '<span class="nt" tabindex="0" aria-label="Has notes" data-note="' + esc(r.requirements) + '">' + icon("note") + "</span>" : "";
 window.favOk = (img) => { if (img.naturalWidth >= 32) img.parentNode.classList.add("has"); else img.remove(); };
 const yn = (v) => { const s = String(v || ""), l = s.toLowerCase(); return l === "yes" ? '<span class="yn y">Yes</span>' : l === "no" ? '<span class="yn n">No</span>' : !s || l === "unknown" ? '<span class="unk">–</span>' : '<span class="yn">' + esc(s) + "</span>"; };
 const eur = (v) => (numv(v) ? "€" + fmt(numv(v)) : '<span class="unk">–</span>');
@@ -295,7 +297,7 @@ const DB_DEFAULT = { q: "", country: "", stage: "", niches: [], price_min: "", p
 const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
-const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"], ["builder", "Link builder contact"]];
+const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"], ["builder", "Link builder contact"], ["notes", "Has notes"]];
 const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Our price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], [null, "Uprankd", "", "Our selling price - see Settings → Pricing"], [null, "Uprankd special", "", "Our selling price for special topics"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
 /* Our selling price: cost × multiplier, rounded up, never below the minimum (Settings → Pricing). */
 const UP = (v) => {
@@ -405,7 +407,7 @@ async function loadDB() {
   const keepLeft = $("#dbTbl").scrollLeft;
   $("#dbTbl").innerHTML = '<table class="dbt fixed">' + colgroup + '<thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
-      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + "</span></td>" +
+      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + noteMark(r) + "</span></td>" +
       '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email, r) +
       '<td class="num muted">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td><td class=\"num\">" + upCell(r.price) + "</td><td class=\"num\">" + upCell(r.special_price) + "</td>" +
       "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
@@ -1008,5 +1010,20 @@ window.addEventListener("hashchange", route);
 
 fetch("/web/logo.svg").then((r) => r.text()).then((svg) => ($("#logo").innerHTML = svg));
 (async () => { await refresh(); route(); })();
+// Notes card: one floating card, so the table's scroll area never cuts it off
+const notePop = document.createElement("div");
+notePop.className = "nt-pop"; notePop.setAttribute("role", "tooltip"); document.body.appendChild(notePop);
+const showNote = (el) => {
+  notePop.innerHTML = '<span class="label">Notes</span><p>' + esc(el.dataset.note) + "</p>";
+  notePop.classList.add("on");
+  const r = el.getBoundingClientRect(), w = notePop.offsetWidth, h = notePop.offsetHeight;
+  notePop.style.left = Math.max(8, Math.min(r.left - 14, innerWidth - w - 8)) + "px";
+  notePop.style.top = (r.bottom + 8 + h > innerHeight - 8 ? r.top - h - 8 : r.bottom + 8) + "px";
+};
+const hideNote = () => notePop.classList.remove("on");
+const noteAt = (e) => { const el = e.target.closest && e.target.closest(".nt"); el ? showNote(el) : hideNote(); };
+document.addEventListener("mouseover", noteAt);
+document.addEventListener("focusin", noteAt);
+document.addEventListener("scroll", hideNote, true);
 setInterval(() => { if (document.hidden) return; if (S.route === "settings" || S.route === "pitch") { api("/api/state?days=" + S.days + "&seen=" + (store.get("almo-seen") || "") + "&" + campQ()).then((d) => { S.data = Object.assign(d, { settings: S.settingsDirty ? S.data.settings : d.settings }); renderNav(); renderRunchip(); }).catch(() => {}); } else refresh(); }, 4000);
 })();

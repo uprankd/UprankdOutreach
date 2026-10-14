@@ -673,3 +673,11 @@ td.email .lb+.copy{margin-left:2px}
 
 .up{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
 .dbt.fixed{min-width:1640px}
+.nt{display:inline-flex;align-items:center;margin-left:6px;color:var(--ink-4);flex:none;border-radius:4px;outline:none}
+.nt svg{width:14px;height:14px}
+tr:hover .nt,.nt:focus-visible{color:var(--ink)}
+.nt:focus-visible{box-shadow:0 0 0 2px var(--sky-tint)}
+.nt-pop{position:fixed;z-index:80;pointer-events:none;width:max-content;max-width:340px;padding:10px 14px 12px;border-radius:8px;background:var(--paper);color:var(--ink);border:1px solid var(--rule-2);box-shadow:var(--shadow);opacity:0;visibility:hidden;transform:translateY(-2px);transition:opacity .12s var(--out),transform .12s var(--out)}
+.nt-pop.on{opacity:1;visibility:visible;transform:none}
+.nt-pop .label{display:block;margin-bottom:3px}
+.nt-pop p{margin:0;font-size:13px;line-height:1.5;white-space:pre-line;display:-webkit-box;-webkit-line-clamp:7;-webkit-box-orient:vertical;overflow:hidden}

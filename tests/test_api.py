@@ -134,6 +134,10 @@ def main():
     only = c.get("/api/db?niches=builder").get_json()["rows"]
     check({r["domain"] for r in only} >= {"agency-a.lv", "agency-b.lv"} and "sent-one.lv" not in {r["domain"] for r in only},
           "filter: link builder contacts only")
+    db.update_site(db.sites("domain=?", ("agency-b.lv",))[0]["id"], requirements="Dutch articles only")
+    noted = {r["domain"]: r for r in c.get("/api/db?niches=notes").get_json()["rows"]}
+    check("agency-b.lv" in noted and "agency-a.lv" not in noted and noted["agency-b.lv"]["requirements"] == "Dutch articles only",
+          "filter: websites with notes, and the note travels with the row")
     aid = rows["agency-a.lv"]["id"]
     detail = c.get("/api/sites/%d" % aid).get_json()
     check(detail["contact"]["link_builder"], "the website panel knows it's a link builder's address")

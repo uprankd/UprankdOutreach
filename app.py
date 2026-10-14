@@ -784,6 +784,8 @@ def db_where(a):
             where.append("(lower(link_insertion)='yes' OR num(link_insertion) IS NOT NULL)")
         elif n == "unmarked":
             where.append("lower(sponsored_tag)='no'")
+        elif n == "notes":
+            where.append("COALESCE(requirements, '')<>''")
         elif n == "builder":
             ids = _link_builder_ids()
             where.append("id IN (%s)" % (",".join(str(i) for i in ids) or "0"))
