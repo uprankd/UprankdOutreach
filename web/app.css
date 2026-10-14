@@ -663,3 +663,5 @@ td.email .lb+.copy{margin-left:2px}
 .ecell{display:flex;align-items:center;min-width:0;max-width:100%}
 .ecell .addr{flex:0 1 auto;min-width:0;max-width:none!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ecell .lb,.ecell .copy{flex:none}
+
+.why{color:var(--ink-2)}

@@ -325,6 +325,14 @@ def main():
     qs = status("quiet-site.lv")
     check(qs["email"] == "info@quiet-site.lv" and qs["lookup"] == 0 and qs["status"] == "in_db",
           "'Find own contact' updates the address without pitching")
+    # A check that hung (e.g. lost connection) is put back in line without a restart
+    db.add_sites(camp, ["hung-site.lv"])
+    hs = status("hung-site.lv")
+    with db.tx() as conn:
+        conn.execute("UPDATE sites SET status='reading', updated_at=? WHERE id=?", (time.time() - 900, hs["id"]))
+    w.last_unstick = 0
+    w._unstick()
+    check(status("hung-site.lv")["status"] == "queued", "a site stuck on 'Checking site' goes back in line by itself")
     print("\nAll checks passed.")
 
 

@@ -82,6 +82,7 @@ class Worker:
             conn.execute("UPDATE sites SET status='queued' WHERE status='reading' AND updated_at<?", (stale,))
             conn.execute("UPDATE sites SET status='ready' WHERE status='sending' AND updated_at<?", (stale,))
             conn.execute("UPDATE sites SET lookup=1 WHERE lookup=2 AND updated_at<?", (stale,))
+        self.last_unstick = time.time()
         self.thread = threading.Thread(target=self._loop, name="almo-worker", daemon=True)
         self.thread.start()
 
@@ -108,7 +109,31 @@ class Worker:
             self.wake.wait(2)
             self.wake.clear()
 
+    def _unstick(self):
+        """A check or send that hasn't finished in 10 minutes (lost connection,
+        a computer that went to sleep mid-way) goes back in line - without
+        waiting for a restart. Sites this process is still working on are left alone."""
+        if time.time() - getattr(self, "last_unstick", 0) < 120:
+            return
+        self.last_unstick = time.time()
+        stale = time.time() - 600
+        with self.lock:
+            busy = set(self.reading)
+        for row in db.query("SELECT id, status, lookup FROM sites WHERE updated_at<? AND "
+                            "(status IN ('reading','sending') OR lookup=2)", (stale,)):
+            if row["id"] in busy:
+                continue
+            if row["status"] == "reading" and db.claim(row["id"], "reading", "queued"):
+                db.log("warn", "Site check took too long - trying again", row["id"])
+            elif row["status"] == "sending":
+                db.claim(row["id"], "sending", "ready")
+            if row["lookup"] == 2:
+                with db.tx() as conn:
+                    conn.execute("UPDATE sites SET lookup=1 WHERE id=? AND lookup=2", (row["id"],))
+            self.dirty = True
+
     def _tick(self):
+        self._unstick()
         cfg = settings.load()
         if cfg.get("running", True):
             self._stage_read(cfg)
@@ -254,7 +279,8 @@ class Worker:
                 attempts = site["attempts"] + 1
                 if not info["ok"] and attempts < 3:
                     fields.update(status="queued", attempts=attempts,
-                                  next_try_at=time.time() + 1800 * attempts)
+                                  next_try_at=time.time() + 1800 * attempts,
+                                  note="Website didn't load (try %d of 3)" % attempts)
                     db.update_site(site_id, **fields)
                     return
                 fields["status"] = "no_email"

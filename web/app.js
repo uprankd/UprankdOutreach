@@ -243,6 +243,25 @@ function sitesShell() {
   }
   $("#q").oninput = (e) => { S.q = e.target.value; clearTimeout(sitesShell._t); sitesShell._t = setTimeout(loadSites, 200); };
 }
+/* Why a site in progress isn't moving yet, in plain words. */
+function waitReason(r) {
+  const st = S.data ? S.data.settings : {}, w = S.data ? S.data.worker : {};
+  const note = esc(r.note || (r.status === "not_fit" ? r.fit_reason : ""));
+  const at = (ts) => new Date(ts * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  let why = "";
+  if (["queued", "reading", "ready", "sending"].includes(r.status) && st.running === false) why = "Paused";
+  else if (r.status === "queued" && r.next_try_at * 1000 > Date.now()) why = "Next try at " + at(r.next_try_at);
+  else if (r.status === "queued") why = "In line to be checked";
+  else if (r.status === "ready") {
+    why = st.send_mode === "off" ? "Waiting - sending is off" : {
+      "outside working hours": "Waiting for sending hours (" + st.work_start + ":00–" + st.work_end + ":00)",
+      "daily limit reached": "Waiting - every mailbox reached today's limit",
+      "no active mailbox": "Waiting - no active mailbox",
+      pacing: "Next in line",
+    }[w.send_wait] || "Next in line";
+  }
+  return why ? '<span class="why">' + esc(why) + "</span>" + (note ? '<span class="muted"> · ' + note + "</span>" : "") : note;
+}
 async function loadSites() {
   if (!$("#tbl")) return;
   const filter = S.route === "attention" ? "attention" : S.filter;
@@ -257,7 +276,7 @@ async function loadSites() {
       : '<div class="empty"><strong>' + (S.q || S.filter !== "all" ? "Nothing matches" : "No websites yet") + '</strong><button class="ctl ctl--primary" data-go="add">Add websites</button></div>';
   } else {
     html = '<table class="dbt ot"><thead><tr><th class="l">Website</th><th class="l">Email</th><th class="l">Status</th><th class="l">Details</th><th>Price</th><th>Contacted</th><th>Updated</th></tr></thead><tbody>' +
-      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + esc(r.note || (r.status === "not_fit" ? r.fit_reason : "")) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
+      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + waitReason(r) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
   }
   $("#tbl").innerHTML = html;
 }
@@ -375,6 +394,7 @@ async function loadDB() {
   const th = ([key, label, cls, tip]) => SORTABLE.includes(key) ? '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + (DBF.sort === key ? ' aria-sort="' + (DBF.dir === "asc" ? "ascending" : "descending") + '"' : "") + ">" + label + '<span class="arr">' + (DBF.sort === key ? (DBF.dir === "asc" ? "↑" : "↓") : "") + "</span></th>" : '<th class="' + (cls || "") + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + ">" + label + "</th>";
   const allOn = DB.rows.every((r) => DB.sel.has(r.id));
   const colgroup = "<colgroup>" + [30, 220, 110, 230, 84, null, 84, 112, 56, 84, 130].map((w) => "<col" + (w ? ' style="width:' + w + 'px"' : "") + ">").join("") + "</colgroup>";
+  const keepLeft = $("#dbTbl").scrollLeft;
   $("#dbTbl").innerHTML = '<table class="dbt fixed">' + colgroup + '<thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
       '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + "</span></td>" +
@@ -383,6 +403,7 @@ async function loadDB() {
       "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
   $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
+  if (keepLeft) $("#dbTbl").scrollLeft = keepLeft;
   renderBulk(); edgeHints();
 }
 function edgeHints() {
@@ -436,6 +457,12 @@ window.__importDB = (input) => { if (input.files[0]) importDB(input.files[0]); i
 async function openSite(id, quiet) {
   let d;
   try { d = await api("/api/sites/" + id); } catch (e) { if (!quiet) toast(e.message); return; }
+  // The panel refreshes every few seconds; if nothing changed, leave it alone,
+  // and when something did, keep the reader where they were.
+  const key = JSON.stringify(d) + (S.drawerEdit ? "e" : "");
+  if (quiet && S.drawer === id && S.drawerKey === key) return;
+  S.drawerKey = key;
+  const keepScroll = quiet && S.drawer === id && $("#drawer .drawer-body") ? $("#drawer .drawer-body").scrollTop : 0;
   S.drawer = id;
   const s = d.site, dr = $("#drawer"), edit = !!S.drawerEdit;
   const has = (v) => v && !/^unknown$/i.test(v);
@@ -472,6 +499,7 @@ async function openSite(id, quiet) {
     '<section><div class="head"><h3 class="sec">Emails' + (d.thread.length ? ' <span class="count-inline">' + d.thread.length + "</span>" : "") + "</h3></div>" + thread + "</section>" +
     (d.changes.length ? '<section><div class="head"><h3 class="sec">History</h3></div><div class="hist">' + d.changes.slice(0, 25).map((c) => '<div class="hist-row"><div class="what">' + changeLine(c) + '</div><div class="who">' + esc(c.actor) + " · " + ago(c.ts) + "</div></div>").join("") + "</div></section>" : "") +
     '<section class="dfoot"><button class="ctl ctl--tiny ctl--quiet-danger" data-sa="remove">Remove website</button></section></div>';
+  if (keepScroll) dr.querySelector(".drawer-body").scrollTop = keepScroll;
   if (!quiet) { dr.classList.add("open"); $("#scrim").classList.add("open"); dr.setAttribute("aria-hidden", "false"); dr.querySelector(".drawer-body").scrollTop = 0; }
   $$("input,textarea", dr).forEach((el) => { el.onfocus = () => (S.drawerEditing = true); });
 }
