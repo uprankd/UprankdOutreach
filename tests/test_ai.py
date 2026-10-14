@@ -101,6 +101,27 @@ def main():
             check("%s API key was rejected" % word in str(exc), "%s: bad key -> plain message" % word)
 
     check(ai._json('```json\n{"a": 1}\n```', "X", "stop") == {"a": 1}, "JSON in a code fence is read")
+    # Claude models that refuse a forced tool call
+    from types import SimpleNamespace as NS
+
+    class Msgs:
+        calls = []
+
+        def create(self, **kw):
+            Msgs.calls.append(kw)
+            if kw["tool_choice"]["type"] == "tool":
+                raise Exception("Error code: 400 - tool_choice: type \"tool\" and \"any\" are not supported for this model.")
+            if len(Msgs.calls) == 2:
+                return NS(stop_reason="tool_use", content=[NS(type="tool_use", input=TERMS)])
+            return NS(stop_reason="end_turn", content=[NS(type="text", text="Here you go: " + json.dumps(TERMS))])
+
+    c = ai.AI("anthropic", "k", "claude-new", "claude-new")
+    c.client = NS(messages=Msgs())
+    r1 = c.extract("=== PUBLISHER\nprice 150")
+    r2 = c.extract("=== PUBLISHER\nprice 150")
+    check(r1["price"] == "150" and r2["price"] == "150", "Claude without forced tool calls: falls back and still reads the reply")
+    check([k["tool_choice"]["type"] for k in Msgs.calls] == ["tool", "auto", "auto"],
+          "it remembers the model and doesn't retry the forced call")
     print("\nAll checks passed.")
 
 

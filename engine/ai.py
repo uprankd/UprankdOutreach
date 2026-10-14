@@ -101,17 +101,43 @@ class AI:
         except Exception as exc:
             raise AIError(_friendly(exc, self.provider)) from exc
 
-    # -- Claude: a forced tool call ---------------------------------------
+    # -- Claude: a tool call ------------------------------------------------
+    # Most models accept a forced tool call. Some newer ones refuse forced
+    # tool_choice ("type tool and any are not supported for this model"); for
+    # those Almo lets the model choose, tells it to use the tool, and falls back
+    # to reading JSON from the text.
+    _AUTO_TOOL = set()
+
     def _claude(self, model, system, user, name, schema, max_tokens):
+        tools = [{"name": name, "description": "Return the result.", "input_schema": schema}]
+        if model not in AI._AUTO_TOOL:
+            try:
+                resp = self.client.messages.create(
+                    model=model, max_tokens=max_tokens, system=system,
+                    messages=[{"role": "user", "content": user}],
+                    tools=tools, tool_choice={"type": "tool", "name": name})
+                return self._claude_result(resp)
+            except Exception as exc:
+                if "tool_choice" not in str(exc):
+                    raise
+                AI._AUTO_TOOL.add(model)
         resp = self.client.messages.create(
-            model=model, max_tokens=max_tokens, system=system,
+            model=model, max_tokens=max(max_tokens, 4000),
+            system=system + "\n\nAnswer only by calling the `%s` tool with every field filled in." % name,
             messages=[{"role": "user", "content": user}],
-            tools=[{"name": name, "description": "Return the result.", "input_schema": schema}],
-            tool_choice={"type": "tool", "name": name},
-        )
+            tools=tools, tool_choice={"type": "auto"})
+        return self._claude_result(resp)
+
+    @staticmethod
+    def _claude_result(resp):
+        text = ""
         for block in resp.content:
             if getattr(block, "type", "") == "tool_use":
                 return dict(block.input)
+            if getattr(block, "type", "") == "text":
+                text += block.text
+        if text.strip():
+            return _json(text, "Claude", resp.stop_reason)
         raise AIError("Claude returned no answer (stop reason: %s)" % resp.stop_reason)
 
     # -- OpenAI: Chat Completions with a strict JSON schema ---------------
@@ -294,6 +320,12 @@ def _json(text, who, finish):
     try:
         return json.loads(text)
     except ValueError:
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            try:
+                return json.loads(text[start:end + 1])
+            except ValueError:
+                pass
         if str(finish).lower() in ("length", "max_tokens"):
             raise AIError("%s's answer was cut off - try again" % who)
         raise AIError("%s returned something that isn't valid JSON" % who)
