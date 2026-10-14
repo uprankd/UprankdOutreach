@@ -115,6 +115,7 @@ def run(w, n=6):
     for _ in range(n):
         w.next_send_at = {}
         w.last_inbox = {}
+        w.global_next = 0
         w._tick()
         deadline = time.time() + 5
         while w.reading and time.time() < deadline:
@@ -326,6 +327,7 @@ def main():
     check(qs["email"] == "info@quiet-site.lv" and qs["lookup"] == 0 and qs["status"] == "in_db",
           "'Find own contact' updates the address without pitching")
     # A check that hung (e.g. lost connection) is put back in line without a restart
+    SITES["hung-site.lv"] = {"ok": True, "text": "news", "language": "lv", "title": "x", "emails": ["info@hung-site.lv"]}
     db.add_sites(camp, ["hung-site.lv"])
     hs = status("hung-site.lv")
     with db.tx() as conn:
@@ -333,6 +335,26 @@ def main():
     w.last_unstick = 0
     w._unstick()
     check(status("hung-site.lv")["status"] == "queued", "a site stuck on 'Checking site' goes back in line by itself")
+    # Uprankd price: x1.6, rounded up to 10, at least 200
+    import exporter
+    check(exporter.uprankd_price("20") == 200 and exporter.uprankd_price("150") == 240
+          and exporter.uprankd_price("133") == 220 and exporter.uprankd_price("") in (None, ""),
+          "Uprankd price: 20 -> 200, 150 -> 240, 133 -> 220")
+    # Global pause: while it runs, no mailbox sends
+    SITES["paused-site.lv"] = {"ok": True, "text": "news", "language": "lv", "title": "x", "emails": ["info@paused-site.lv"]}
+    db.add_sites(camp, ["paused-site.lv"])
+    for _ in range(4):
+        w.next_send_at = {}
+        w.global_next = time.time() + 600
+        w._tick()
+        deadline = time.time() + 5
+        while w.reading and time.time() < deadline:
+            time.sleep(0.05)
+    check(not any(m["To"] == "info@paused-site.lv" for m in SENT), "nothing is sent during the global pause")
+    run(w, 4)
+    check(any(m["To"] == "info@paused-site.lv" for m in SENT), "after the pause it sends")
+    st = settings.load()
+    check(st["gap_min"] == 240 and st["gap_max"] == 600 and st["global_gap_min"] == 30, "new pause defaults")
     print("\nAll checks passed.")
 
 

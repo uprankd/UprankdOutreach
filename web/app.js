@@ -296,7 +296,15 @@ const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
 const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"], ["builder", "Link builder contact"]];
-const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
+const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Our price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], [null, "Uprankd", "", "Our selling price - see Settings → Pricing"], [null, "Uprankd special", "", "Our selling price for special topics"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
+/* Our selling price: cost × multiplier, rounded up, never below the minimum (Settings → Pricing). */
+const UP = (v) => {
+  const n = numv(v), st = (S.data && S.data.settings) || {};
+  if (!n) return null;
+  const step = Math.max(1, Number(st.price_round) || 1), mult = Number(st.price_multiplier) || 1;
+  return Math.max(Number(st.price_minimum) || 0, Math.ceil(Math.round((n * mult / step) * 1e6) / 1e6) * step);
+};
+const upCell = (v) => UP(v) ? '<span class="up">€' + fmt(UP(v)) + "</span>" : '<span class="unk">–</span>';
 const numv = (v) => { const n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) && n > 0 && /^\s*\d/.test(String(v)) ? n : null; };
 /* What a topic costs: its own price, else the special-topics price, else the normal price when they just said yes. */
 function topicPrice(r, k) {
@@ -393,13 +401,13 @@ async function loadDB() {
   const SORTABLE = ["domain", "country", "email", "price", "sponsored", "link", "dr", "traffic", "status"];
   const th = ([key, label, cls, tip]) => SORTABLE.includes(key) ? '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + (DBF.sort === key ? ' aria-sort="' + (DBF.dir === "asc" ? "ascending" : "descending") + '"' : "") + ">" + label + '<span class="arr">' + (DBF.sort === key ? (DBF.dir === "asc" ? "↑" : "↓") : "") + "</span></th>" : '<th class="' + (cls || "") + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + ">" + label + "</th>";
   const allOn = DB.rows.every((r) => DB.sel.has(r.id));
-  const colgroup = "<colgroup>" + [30, 220, 110, 230, 84, null, 84, 112, 56, 84, 130].map((w) => "<col" + (w ? ' style="width:' + w + 'px"' : "") + ">").join("") + "</colgroup>";
+  const colgroup = "<colgroup>" + [30, 210, 105, 220, 84, null, 88, 112, 84, 112, 56, 84, 130].map((w) => "<col" + (w ? ' style="width:' + w + 'px"' : "") + ">").join("") + "</colgroup>";
   const keepLeft = $("#dbTbl").scrollLeft;
   $("#dbTbl").innerHTML = '<table class="dbt fixed">' + colgroup + '<thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
       '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + "</span></td>" +
       '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email, r) +
-      '<td class="num strong">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td>" +
+      '<td class="num muted">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td><td class=\"num\">" + upCell(r.price) + "</td><td class=\"num\">" + upCell(r.special_price) + "</td>" +
       "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
   $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
@@ -440,17 +448,32 @@ async function bulkDB(action) {
 async function importDB(file) {
   const fd = new FormData(); fd.append("file", file);
   toast("Reading " + file.name + "…", 8000);
-  try {
-    const p = await api("/api/db/import?preview=1", { body: fd });
-    const sheets = p.sheets.filter((s) => s.rows).map((s) => (s.name ? s.name + " " : "") + "(" + s.rows + ")").join(", ");
-    if (!p.new && !p.updated) { toast("Nothing new in " + file.name + " - all " + fmt(p.unchanged) + " websites are already in the database", 5000); return; }
-    if (!confirm("Import " + file.name + "?\n\n" + fmt(p.new) + " new websites\n" + fmt(p.updated) + " existing ones get missing details filled in\n" + fmt(p.unchanged) + " already up to date\n\nSheets: " + sheets + "\n\nNothing Almo collected is overwritten.")) return;
+  let p;
+  try { p = await api("/api/db/import?preview=1", { body: fd }); } catch (e) { toast(e.message, 6000); return; }
+  if (!p.new && !p.updated && !p.metrics_differ) { toast("Nothing new in " + file.name + " - all " + fmt(p.unchanged) + " websites are already in the database", 5000); return; }
+  $("#toast").classList.remove("show");
+  $("#impFile").textContent = file.name;
+  $("#impList").innerHTML = [[p.new, "new websites"], [p.updated, "existing ones get missing details filled in"], [p.unchanged, "already in the database, nothing to fill"]]
+    .map(([n, l]) => '<div class="imp-row"><b>' + fmt(n) + "</b><span>" + l + "</span></div>").join("");
+  $("#impMetricsRow").hidden = !p.metrics_differ;
+  $("#impMetrics").checked = false;
+  $("#impMetricsText").textContent = "Also update DR and traffic for " + fmt(p.metrics_differ) + " website" + (p.metrics_differ === 1 ? "" : "s") + " where the file has newer numbers";
+  $("#impSheets").textContent = p.sheets.filter((x) => x.rows).map((x) => (x.name ? x.name + " " : "") + "(" + fmt(x.rows) + ")").join(", ");
+  $("#impModal").classList.add("open"); $("#scrim").classList.add("open");
+  $("#impGo").onclick = async () => {
+    $("#impGo").disabled = true;
     const fd2 = new FormData(); fd2.append("file", file);
-    const r = await api("/api/db/import", { body: fd2 });
-    toast("Imported " + fmt(r.new) + " new, updated " + fmt(r.updated), 4000);
-    DBF.page = 0; loadDB(); refresh();
-  } catch (e) { toast(e.message, 6000); }
+    if ($("#impMetrics").checked) fd2.append("refresh_metrics", "1");
+    try {
+      const r = await api("/api/db/import", { body: fd2 });
+      closeImport();
+      toast("Imported " + fmt(r.new) + " new, updated " + fmt(r.updated), 4000);
+      DBF.page = 0; loadDB(); refresh();
+    } catch (e) { toast(e.message, 6000); }
+    $("#impGo").disabled = false;
+  };
 }
+function closeImport() { $("#impModal").classList.remove("open"); if (!S.drawer && !$("#addModal").classList.contains("open")) $("#scrim").classList.remove("open"); }
 window.__importDB = (input) => { if (input.files[0]) importDB(input.files[0]); input.value = ""; };
 
 /* ------------------------------------------------------------------ site drawer */
@@ -477,7 +500,7 @@ async function openSite(id, quiet) {
   // Terms as two short lists - what an article costs, and which topics they take.
   const kv = (label, value) => '<div class="kv-row"><span class="k">' + label + '</span><span class="v">' + value + "</span></div>";
   const facts = !anyTerms ? '<p class="small notes-empty">No terms yet - they fill in when the website replies, or add them with Edit.</p>'
-    : '<div class="kv-grid"><div><div class="kv-h">Prices</div>' + kv("Article", eur(s.price)) + kv("Special topics", eur(s.special_price)) + kv("Link insertion", linkIns(s.link_insertion)) + kv("Marked sponsored", tagCell(s.sponsored_tag)) +
+    : '<div class="kv-grid"><div><div class="kv-h">Prices</div>' + kv("Article", eur(s.price)) + kv("Uprankd price", upCell(s.price)) + kv("Special topics", eur(s.special_price)) + kv("Uprankd special", upCell(s.special_price)) + kv("Link insertion", linkIns(s.link_insertion)) + kv("Marked sponsored", tagCell(s.sponsored_tag)) +
       '</div><div><div class="kv-h">Topics</div>' + TOPICS.map(([k, l]) => kv(l, topicCell(s, k))).join("") + "</div></div>";
   const topics = "";
   const inp = (label, key, ph) => '<div class="fld"><span class="label">' + label + '</span><input data-f="' + key + '" value="' + esc(has(s[key]) ? s[key] : "") + '" placeholder="' + (ph || "–") + '"></div>';
@@ -603,12 +626,18 @@ function renderSettings() {
       (() => { const P = { anthropic: ["Anthropic API key", "anthropic_key", "sk-ant-…", "https://console.anthropic.com/settings/keys"], openai: ["OpenAI API key", "openai_key", "sk-…", "https://platform.openai.com/api-keys"], gemini: ["Gemini API key", "gemini_key", "AIza…", "https://aistudio.google.com/apikey"] }[st.ai_provider || "anthropic"];
         return '<div class="fld"><span class="label">' + P[0] + '</span><input data-k="' + P[1] + '" type="password" placeholder="' + (st[P[1] + "_set"] ? "•••••••••••• saved" : P[2]) + '"><span class="hint"><a href="' + P[3] + '" target="_blank" rel="noopener">Get one</a></span></div>'; })() +
       '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl" data-test="ai">Save and test</button><span class="result" id="r-ai"></span></div>') +
+    card("pricing", "Pricing", "How the Uprankd price is worked out from our price.",
+      '<div class="form-grid three"><div class="fld"><span class="label">Multiplier</span><div class="affix"><span>×</span><input data-k="price_multiplier" inputmode="decimal" value="' + esc(st.price_multiplier) + '"></div></div>' +
+      '<div class="fld"><span class="label">Minimum price</span><div class="affix"><span>€</span><input data-k="price_minimum" inputmode="numeric" value="' + esc(st.price_minimum) + '"></div></div>' +
+      '<div class="fld"><span class="label">Round up to</span><div class="affix"><span>€</span><input data-k="price_round" inputmode="numeric" value="' + esc(st.price_round) + '"></div></div></div>' +
+      '<p class="small" style="margin:12px 0 0">Example: €' + 130 + " → €" + fmt(UP(130)) + ", €420 → €" + fmt(UP(420)) + "</p>") +
     card("sending", "Sending", "Start with Test.",
       '<div class="seg" id="modes">' + [["off", "Off"], ["test", "Test"], ["live", "Live"]].map(([k, t]) => '<button data-mode="' + k + '" class="' + (st.send_mode === k ? "is-on" : "") + '"><span class="dot' + (k === "live" ? " on" : k === "test" ? " warn" : "") + '"></span>' + t + "</button>").join("") + '</div><p class="small mode-note">' + MODES[st.send_mode] + "</p>") +
     '<section class="sset" id="auto"><div class="sset-head"><h2 class="sec">Automation</h2><p>Limits, timing and the details Almo fills in for you.</p></div><div class="sset-body">' +
       sw("check_sites", "Skip sites that don't publish articles") + sw("find_direct", "Look for the site's own contact when only a link builder's address is known") + sw("translate", "Translate the pitch to the site's language") + sw("auto_followup", "Reply automatically when details are missing") +
       '<div class="form-grid" style="margin-top:18px">' + num("daily_limit", "Default daily limit", "For new mailboxes") + num("nudge_days", "Reminder after (days)", "0 = no reminder") +
-      '<div class="fld"><span class="label">Pause between emails (sec)</span><div class="inline"><input data-k="gap_min" value="' + st.gap_min + '"><span class="dim">–</span><input data-k="gap_max" value="' + st.gap_max + '"></div></div>' +
+      '<div class="fld"><span class="label">Pause between emails from one mailbox (sec)</span><div class="inline"><input data-k="gap_min" value="' + st.gap_min + '"><span class="dim">–</span><input data-k="gap_max" value="' + st.gap_max + '"></div><span class="hint">Random in this range, for each mailbox</span></div>' +
+      '<div class="fld"><span class="label">Pause between any two emails (sec)</span><div class="inline"><input data-k="global_gap_min" value="' + st.global_gap_min + '"><span class="dim">–</span><input data-k="global_gap_max" value="' + st.global_gap_max + '"></div><span class="hint">Across all mailboxes, so they never send at once</span></div>' +
       '<div class="fld"><span class="label">Sending hours</span><div class="inline"><input data-k="work_start" value="' + st.work_start + '"><span class="dim">–</span><input data-k="work_end" value="' + st.work_end + '"></div></div>' +
       num("inbox_every_min", "Check inbox every (min)") + '<div class="fld"><span class="label">Company</span><input data-k="company" value="' + esc(st.company) + '"></div>' +
       '<div class="fld full"><span class="label">Results Excel file</span><input data-k="results_path" value="' + esc(st.results_path) + '" placeholder="~/Desktop/Almo results.xlsx"><span class="hint">Kept up to date automatically. Empty = off.</span></div>' +
@@ -751,16 +780,19 @@ const EXP = { q: "", kind: store.get("almo-exp-kind") || "full" };
 function openExport(q, what) {
   EXP.q = q || ""; EXP.what = what || "";
   $("#expWhat").textContent = EXP.what || (S.campaign ? "Websites in this campaign" : "All websites in outreach");
-  $("#expMarkup").value = store.get("almo-markup") || "30";
+  const pst = (S.data && S.data.settings) || {};
+  $("#expMarkup").value = store.get("almo-markup") || String(Math.round(((Number(pst.price_multiplier) || 1.3) - 1) * 100));
   $("#expMargin").value = store.get("almo-margin") || "0";
-  $("#expMin").value = store.get("almo-minimum") || "0";
+  $("#expMin").value = store.get("almo-minimum") || String(pst.price_minimum || 0);
+  EXP.step = Math.max(1, Number(pst.price_round) || 1);
+  $("#expRule").textContent = "Our price + markup + margin, rounded up to €" + EXP.step + ", never below the minimum";
   $("#expSpecial").checked = store.get("almo-exp-special") === "1";
   renderExport();
   $("#expModal").classList.add("open"); $("#scrim").classList.add("open");
   api("/api/export/count?" + EXP.q).then((c) => { EXP.count = c; renderExport(); }).catch(() => {});
 }
 function closeExport() { $("#expModal").classList.remove("open"); if (!S.drawer && !$("#addModal").classList.contains("open")) $("#scrim").classList.remove("open"); }
-const clientPrice = (p, mu, mg, mn) => Math.max(Math.ceil(Math.round((p * (1 + mu / 100) + mg) * 1e6) / 1e6), Math.ceil(mn || 0));
+const clientPrice = (p, mu, mg, mn) => { const st = EXP.step || 1; return Math.max(Math.ceil(Math.round(((p * (1 + mu / 100) + mg) / st) * 1e6) / 1e6) * st, Math.ceil(mn || 0)); };
 function renderExport() {
   $$("#expKind button").forEach((b) => b.classList.toggle("is-on", b.dataset.ek === EXP.kind));
   const client = EXP.kind === "client";
@@ -779,7 +811,7 @@ function downloadExport() {
   if (client) {
     const mu = $("#expMarkup").value.replace(",", ".") || "0", mg = $("#expMargin").value.replace(",", ".") || "0", mn = $("#expMin").value.replace(",", ".") || "0";
     store.set("almo-markup", mu); store.set("almo-margin", mg); store.set("almo-minimum", mn); store.set("almo-exp-special", $("#expSpecial").checked ? "1" : "0");
-    url += "&client=1&markup=" + encodeURIComponent(mu) + "&margin=" + encodeURIComponent(mg) + "&minimum=" + encodeURIComponent(mn) + ($("#expSpecial").checked ? "&special=1" : "");
+    url += "&client=1&markup=" + encodeURIComponent(mu) + "&margin=" + encodeURIComponent(mg) + "&minimum=" + encodeURIComponent(mn) + "&step=" + (EXP.step || 1) + ($("#expSpecial").checked ? "&special=1" : "");
   }
   store.set("almo-exp-kind", EXP.kind);
   location.href = url; closeExport(); toast(client ? "Price list downloading" : "Export downloading");
@@ -930,9 +962,9 @@ function exportFromPage() {
 $$("#expKind button").forEach((b) => (b.onclick = () => { EXP.kind = b.dataset.ek; renderExport(); }));
 ["#expMarkup", "#expMargin", "#expMin"].forEach((id) => ($(id).oninput = renderExport));
 $("#expGo").onclick = downloadExport;
-document.addEventListener("click", (e) => { if (e.target.closest("[data-close-exp]")) closeExport(); if (e.target.closest("[data-export]")) exportFromPage(); });
-$("#scrim").onclick = () => { closeAdd(); closeDrawer(); closeExport(); };
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeAdd(); closeDrawer(); closeExport(); } });
+document.addEventListener("click", (e) => { if (e.target.closest("[data-close-imp]")) closeImport(); if (e.target.closest("[data-close-exp]")) closeExport(); if (e.target.closest("[data-export]")) exportFromPage(); });
+$("#scrim").onclick = () => { closeAdd(); closeDrawer(); closeExport(); closeImport(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeAdd(); closeDrawer(); closeExport(); closeImport(); } });
 $("#siteText").oninput = () => { clearTimeout(previewAdd._t); previewAdd._t = setTimeout(previewAdd, 250); };
 $("#fileIn").onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
 const drop = $("#drop");

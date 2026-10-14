@@ -34,8 +34,14 @@ DEFAULTS = {
     "nudge_days": 4,                  # remind once if no reply after N days
     "max_nudges": 1,
     "daily_limit": 40,
-    "gap_min": 60,
-    "gap_max": 180,
+    "gap_min": 240,                   # seconds between two emails from one mailbox
+    "gap_max": 600,
+    "global_gap_min": 30,             # seconds between any two emails Almo sends
+    "global_gap_max": 90,
+    # Uprankd price = our price × multiplier, rounded up, never below the minimum
+    "price_multiplier": 1.6,
+    "price_minimum": 200,
+    "price_round": 10,
     "work_start": 8,
     "work_end": 19,
     "inbox_every_min": 5,
@@ -111,6 +117,14 @@ def load(with_secrets=True):
     stored = db.get_settings()
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in stored.items() if not k.startswith("_")})
+    if not stored.get("_gaps_v2"):
+        # Older versions sent every 1-3 minutes per mailbox; move saved defaults
+        # to the slower pace, keep anything someone chose on purpose.
+        fix = {"_gaps_v2": True}
+        if stored.get("gap_min", 60) == 60 and stored.get("gap_max", 180) == 180:
+            fix.update(gap_min=DEFAULTS["gap_min"], gap_max=DEFAULTS["gap_max"])
+            cfg.update(gap_min=DEFAULTS["gap_min"], gap_max=DEFAULTS["gap_max"])
+        db.save_settings(fix)
     if "encrypted-tbn0.gstatic.com" in (cfg.get("logo_url") or ""):
         cfg["logo_url"] = DEFAULTS["logo_url"]     # the old app's placeholder logo
     if with_secrets:
@@ -138,7 +152,8 @@ def public():
 
 INT_KEYS = {"smtp_port", "imap_port", "nudge_days", "max_nudges", "daily_limit",
             "gap_min", "gap_max", "work_start", "work_end", "inbox_every_min",
-            "recontact_days"}
+            "recontact_days", "global_gap_min", "global_gap_max", "price_minimum", "price_round"}
+FLOAT_KEYS = {"price_multiplier"}
 BOOL_KEYS = {"running", "check_sites", "translate", "auto_followup", "find_direct"}
 
 
@@ -161,13 +176,24 @@ def save(values):
             except ValueError:
                 problems.append("%s must be a whole number" % key.replace("_", " "))
                 continue
+        elif key in FLOAT_KEYS:
+            try:
+                value = float(str(value).strip().replace(",", "."))
+                if value <= 0:
+                    raise ValueError
+            except ValueError:
+                problems.append("%s must be a number" % key.replace("_", " "))
+                continue
         elif key in BOOL_KEYS:
             value = bool(value)
         elif isinstance(value, str):
             value = value.strip()
         clean[key] = value
-    if "gap_min" in clean and "gap_max" in clean and clean["gap_max"] < clean["gap_min"]:
-        clean["gap_max"] = clean["gap_min"]
+    for lo, hi in (("gap_min", "gap_max"), ("global_gap_min", "global_gap_max")):
+        if lo in clean and hi in clean and clean[hi] < clean[lo]:
+            clean[hi] = clean[lo]
+    if clean.get("price_round") == 0:
+        clean["price_round"] = 1
     if "send_mode" in clean and clean["send_mode"] not in ("off", "test", "live"):
         clean.pop("send_mode")
     if "ai_provider" in clean and clean["ai_provider"] not in ("anthropic", "openai", "gemini"):

@@ -74,6 +74,32 @@ def main():
     d = db.get_site(d["id"])
     check(d["status"] == "ready" and d["email"] == "reklama@delfi.lv" and d["language"] == "lv",
           "'Ask for prices' uses the database email - no scraping")
+
+    # DR and traffic: kept by default, updated only when asked
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Latvija"
+    ws.append(["Website", "DR", "Traffic"])
+    ws.append(["delfi.lv", "70", "500000"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    m1 = buf.getvalue()
+    importer.run("m.xlsx", m1, None)
+    d = db.sites("domain='delfi.lv'")[0]
+    check(str(d["dr"]) == "70" and str(d["traffic"]) == "500000", "DR and traffic fill when empty")
+    ws["B2"] = "74"
+    ws["C2"] = "620000"
+    buf = io.BytesIO()
+    wb.save(buf)
+    m2 = buf.getvalue()
+    p = importer.preview("m.xlsx", m2)
+    check(p["metrics_differ"] == 1, "preview counts websites with newer DR/traffic")
+    importer.run("m.xlsx", m2, None)
+    check(str(db.sites("domain='delfi.lv'")[0]["dr"]) == "70", "without the box, DR stays as it was")
+    importer.run("m.xlsx", m2, None, refresh_metrics=True)
+    d = db.sites("domain='delfi.lv'")[0]
+    check(str(d["dr"]) == "74" and str(d["traffic"]) == "620000", "with the box, DR and traffic update")
+    check(d["price"] == "175", "updating metrics leaves the price alone")
     print("\nAll checks passed.")
 
 

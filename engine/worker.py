@@ -367,9 +367,16 @@ class Worker:
             gap = random.randint(int(cfg["gap_min"]), max(int(cfg["gap_min"]), int(cfg["gap_max"])))
         self.next_send_at[box["id"]] = time.time() + gap
         self.last_sent[box["id"]] = time.time()
+        # And a pause before Almo sends anything else, from any mailbox, so
+        # several mailboxes never fire at the same moment.
+        if cfg["send_mode"] != "test":
+            lo = int(cfg.get("global_gap_min") or 0)
+            self.global_next = time.time() + random.randint(lo, max(lo, int(cfg.get("global_gap_max") or 0)))
 
     def _stage_send(self, cfg, boxes):
         if not self._in_hours(cfg):
+            return
+        if time.time() < getattr(self, "global_next", 0):
             return
         free = [b for b in boxes if self._box_free(b)]
         if not free:

@@ -869,7 +869,7 @@ def db_import():
         if request.args.get("preview"):
             return jsonify(importer.preview(f.filename, raw))
         camp = int(request.form.get("campaign_id") or 0) or None
-        stats = importer.run(f.filename, raw, camp)
+        stats = importer.run(f.filename, raw, camp, refresh_metrics=bool(request.form.get("refresh_metrics")))
     except Exception as exc:
         return jsonify({"error": "Couldn't read that file: %s" % str(exc)[:160]}), 400
     worker.dirty = True
@@ -947,7 +947,8 @@ def export():
             except ValueError:
                 return 0.0
         exporter.write_client(buf_path, camp, ids, _num("markup"), _num("margin"),
-                              bool(request.args.get("special")), _num("minimum"))
+                              bool(request.args.get("special")), _num("minimum"),
+                              int(_num("step") or 1))
         name = "Uprankd price list %s.xlsx" % datetime.now().strftime("%Y-%m-%d")
         return send_file(buf_path, as_attachment=True, download_name=name)
     exporter.write(buf_path, camp, only, ids)

@@ -208,16 +208,20 @@ def read_rows(filename, raw):
 
 def preview(filename, raw):
     """What an import would do, without changing anything."""
-    return _run(filename, raw, dry=True)
+    return _run(filename, raw, dry=True, refresh=True)
 
 
-def run(filename, raw, campaign_id):
-    return _run(filename, raw, dry=False, campaign_id=campaign_id)
+def run(filename, raw, campaign_id, refresh_metrics=False):
+    """refresh_metrics: replace DR and traffic with the file's values too
+    (normally only empty fields are filled in)."""
+    return _run(filename, raw, dry=False, campaign_id=campaign_id, refresh=refresh_metrics)
+
+METRICS = ("dr", "traffic")
 
 
-def _run(filename, raw, dry, campaign_id=None):
+def _run(filename, raw, dry, campaign_id=None, refresh=False):
     sheets = read_rows(filename, raw)
-    stats = {"new": 0, "updated": 0, "unchanged": 0, "sheets": [], "columns": []}
+    stats = {"new": 0, "updated": 0, "unchanged": 0, "sheets": [], "columns": [], "metrics_differ": 0}
     seen = set()
     now = time.time()
     known = {r["domain"]: r for r in db.query("SELECT * FROM sites")}
@@ -257,6 +261,12 @@ def _run(filename, raw, dry, campaign_id=None):
                 fill = {k: v for k, v in values.items()
                         if not str(current.get(k) or "").strip()
                         or str(current.get(k)).lower() == "unknown"}
+                newer = {k: values[k] for k in METRICS if values.get(k) and str(current.get(k) or "").strip()
+                         and str(current.get(k)).strip() != values[k]}
+                if newer:
+                    stats["metrics_differ"] += 1
+                    if refresh and not dry:
+                        fill.update(newer)
                 if status and current.get("status") == "in_db" and current.get("note") != status[1]:
                     fill.update(status=status[0], note=status[1])
                 if fill:

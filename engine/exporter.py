@@ -11,6 +11,7 @@ import db
 COLUMNS = [
     ("Website", "domain", 26), ("Email", "email", 30), ("Status", "status_label", 18),
     ("Price (EUR)", "price", 12), ("Special topics price (EUR)", "special_price", 14),
+    ("Uprankd price (EUR)", "uprankd_price", 12), ("Uprankd special (EUR)", "uprankd_special", 12),
     ("Casino", "casino", 9), ("Loan", "loan", 9), ("Crypto", "crypto", 9), ("Adult", "adult", 9),
     ("Marked sponsored", "sponsored_tag", 11), ("Link insertion", "link_insertion", 12),
     ("Requirements / notes", "requirements", 48), ("Country", "country", 14),
@@ -32,26 +33,50 @@ def rows(campaign_id=None, only=None, ids=None):
         where += " AND id IN (%s)" % (",".join(str(int(i)) for i in ids) or "0")
     if only == "prices":
         where += " AND (price<>'' AND lower(price)<>'unknown')"
+    import settings
+
+    cfg = settings.load(False)
     out = []
     for s in db.sites(where, tuple(args), "domain ASC"):
         s["status_label"] = STATUS.get(s["status"], s["status"])
         s["sent_on"] = datetime.fromtimestamp(s["sent_at"]).strftime("%Y-%m-%d") if s["sent_at"] else ""
         s["replied_on"] = datetime.fromtimestamp(s["replied_at"]).strftime("%Y-%m-%d") if s["replied_at"] else ""
         s["campaign"] = camps.get(s["campaign_id"], "")
+        s["uprankd_price"] = uprankd_price(s.get("price"), cfg) or ""
+        s["uprankd_special"] = uprankd_price(s.get("special_price"), cfg) or ""
         out.append(s)
     return out
 
 
-def client_price(price, markup=0.0, margin=0.0, minimum=0.0):
-    """Our cost + markup % + a fixed margin, rounded up to whole euros, and
-    never below the minimum client price. None when the cost isn't a number."""
+def uprankd_price(price, cfg=None):
+    """Our selling price: cost × multiplier, rounded up to the step, at least
+    the minimum (Settings → Pricing; 1.6, €10, €200 by default)."""
+    import settings
+
+    cfg = cfg or settings.load(False)
     try:
         cost = float(str(price).replace(",", ".").strip())
     except (TypeError, ValueError):
         return None
     if cost <= 0:
         return None
-    value = int(math.ceil(round(cost * (1 + float(markup or 0) / 100.0) + float(margin or 0), 6)))
+    step = max(1, int(cfg.get("price_round") or 1))
+    value = int(math.ceil(round(cost * float(cfg.get("price_multiplier") or 1) / step, 6)) * step)
+    return max(value, int(cfg.get("price_minimum") or 0))
+
+
+def client_price(price, markup=0.0, margin=0.0, minimum=0.0, step=1):
+    """Our cost + markup % + a fixed margin, rounded up to the step (whole
+    euros by default), and never below the minimum client price. None when
+    the cost isn't a number."""
+    try:
+        cost = float(str(price).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+    if cost <= 0:
+        return None
+    step = max(1, int(step or 1))
+    value = int(math.ceil(round((cost * (1 + float(markup or 0) / 100.0) + float(margin or 0)) / step, 6)) * step)
     return max(value, int(math.ceil(float(minimum or 0))))
 
 
@@ -81,22 +106,22 @@ def _positive(value):
     return n if n > 0 else None
 
 
-def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False, minimum=0.0):
+def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False, minimum=0.0, step=1):
     out = []
     for r in rows(campaign_id, "prices", ids):
-        price = client_price(r["price"], markup, margin, minimum)
+        price = client_price(r["price"], markup, margin, minimum, step)
         if price is None:
             continue
         row = {"domain": r["domain"], "price": price, "requirements": r.get("requirements") or ""}
         if special:
             for key, _label in TOPICS:
                 t = topic_price(r, key)
-                row[key] = "No" if t == "No" else (client_price(t, markup, margin, minimum) if t else "")
+                row[key] = "No" if t == "No" else (client_price(t, markup, margin, minimum, step) if t else "")
         out.append(row)
     return out
 
 
-def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False, minimum=0.0):
+def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False, minimum=0.0, step=1):
     """A price list to send to a client: website, client price, requirements.
     No costs, emails or internal notes."""
     from openpyxl import Workbook
@@ -114,7 +139,7 @@ def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, speci
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="060B70")
         cell.alignment = Alignment(vertical="center")
-    for r in client_rows(campaign_id, ids, markup, margin, special, minimum):
+    for r in client_rows(campaign_id, ids, markup, margin, special, minimum, step):
         ws.append([r.get(k, "") for _l, k, _w in cols])
     for i, (_l, _k, width) in enumerate(cols, start=1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = width

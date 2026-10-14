@@ -665,3 +665,11 @@ td.email .lb+.copy{margin-left:2px}
 .ecell .lb,.ecell .copy{flex:none}
 
 .why{color:var(--ink-2)}
+
+.imp-list{display:flex;flex-direction:column}
+.imp-row{display:flex;align-items:baseline;gap:12px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:var(--t-body);color:var(--ink-2)}
+.imp-row b{min-width:64px;text-align:right;color:var(--ink);font-size:17px;font-variant-numeric:tabular-nums}
+#impMetricsRow{margin-top:16px}
+
+.up{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
+.dbt.fixed{min-width:1640px}

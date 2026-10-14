@@ -79,10 +79,19 @@
         <div class="fld"><span class="label">Minimum price</span><div class="affix"><span>€</span><input id="expMin" inputmode="decimal" placeholder="200"></div></div>
       </div>
       <label class="check"><input type="checkbox" id="expSpecial"> Also include casino, loan, crypto and adult prices</label>
-      <div class="example"><p class="small">Our price + markup + margin, never below the minimum</p><div id="expExample"></div></div>
+      <div class="example"><p class="small" id="expRule">Our price + markup + margin, never below the minimum</p><div id="expExample"></div></div>
     </div>
   </div>
   <div class="modal-foot"><span class="grow" id="expInfo"></span><button class="ctl" data-close-exp>Cancel</button><button class="ctl ctl--primary" id="expGo">Download Excel</button></div>
+</div>
+<div class="modal" id="impModal" role="dialog" aria-modal="true" aria-labelledby="impTitle">
+  <div class="modal-head"><h2 class="sec" id="impTitle">Import</h2><div class="pagesub" id="impFile"></div></div>
+  <div class="modal-body">
+    <div class="imp-list" id="impList"></div>
+    <label class="check" id="impMetricsRow" hidden><input type="checkbox" id="impMetrics"> <span id="impMetricsText"></span></label>
+    <p class="small" style="margin:14px 0 0">Prices, emails and everything Almo collected are never overwritten.</p>
+  </div>
+  <div class="modal-foot"><span class="grow" id="impSheets"></span><button class="ctl" data-close-imp>Cancel</button><button class="ctl ctl--primary" id="impGo">Import</button></div>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/web/app.js"></script>
