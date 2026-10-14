@@ -643,3 +643,23 @@ td.strong{color:var(--ink);font-weight:650}
 .dbt.fixed{min-width:1440px}
 .dbt.fixed .tcs{flex-wrap:nowrap}
 .dactions{margin-bottom:26px}
+
+/* ---------- link builders, history, activity ---------- */
+.nav .count.sky{background:var(--sky-tint);color:var(--sky)}
+.chg{display:inline-block;flex:none;width:6px;height:6px;margin-left:7px;border-radius:50%;background:var(--sky);vertical-align:2px}
+.lb{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn);font-size:10.5px;font-weight:600;vertical-align:1px;white-space:nowrap}
+td.email .lb+.copy{margin-left:2px}
+.lb-note{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding:10px 12px;border-radius:var(--r);background:color-mix(in srgb,var(--warn) 8%,var(--paper));border:1px solid color-mix(in srgb,var(--warn) 25%,var(--rule));font-size:var(--t-small);color:var(--ink-2)}
+.hint-line{display:flex;align-items:center;gap:8px;margin:12px 0 0}
+.hist{display:flex;flex-direction:column}
+.hist-row{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:var(--t-small)}
+.hist-row .what{color:var(--ink-2);min-width:0}
+.hist-row .what b{color:var(--ink);font-weight:600}
+.hist-row .who{flex:none;color:var(--ink-3);white-space:nowrap}
+.hist-row .arrow,.act .arrow{color:var(--ink-4);margin:0 2px}
+.act td.when{width:110px}
+.act td.change{white-space:normal;color:var(--ink-2)}
+.act td.change b{color:var(--ink);font-weight:600}
+.ecell{display:flex;align-items:center;min-width:0;max-width:100%}
+.ecell .addr{flex:0 1 auto;min-width:0;max-width:none!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ecell .lb,.ecell .copy{flex:none}

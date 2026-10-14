@@ -27,7 +27,8 @@ DEFAULTS = {
     # Automation
     "send_mode": "off",               # off | test | live
     "running": True,
-    "check_sites": True,              # skip sites that don't publish articles
+    "check_sites": True,
+    "find_direct": True,              # look for a site's own contact before pitching a link builder              # skip sites that don't publish articles
     "translate": True,                # write the pitch in the site's language
     "auto_followup": True,            # reply automatically when prices are missing
     "nudge_days": 4,                  # remind once if no reply after N days
@@ -138,7 +139,7 @@ def public():
 INT_KEYS = {"smtp_port", "imap_port", "nudge_days", "max_nudges", "daily_limit",
             "gap_min", "gap_max", "work_start", "work_end", "inbox_every_min",
             "recontact_days"}
-BOOL_KEYS = {"running", "check_sites", "translate", "auto_followup"}
+BOOL_KEYS = {"running", "check_sites", "translate", "auto_followup", "find_direct"}
 
 
 def save(values):

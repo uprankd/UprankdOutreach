@@ -29,6 +29,7 @@ const I = {
   outreach: '<path d="M14 2 7 9M14 2l-4.5 12L7 9 2 6.5 14 2Z"/>',
   check: '<path d="m3.5 8.5 3 3 6-7"/>',
   more: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>',
+  history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.8v2.9h2.9M8 5v3.2l2.2 1.4"/>',
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   inbox: '<path d="M2 9.5 3.6 3.7a1 1 0 0 1 1-.7h6.8a1 1 0 0 1 1 .7L14 9.5V13H2V9.5Zm0 0h3.5l1 1.5h3l1-1.5H14"/>',
@@ -79,12 +80,12 @@ const day = (ts) => ts ? new Date(ts * 1000).toLocaleDateString("en-GB", { day: 
 const campQ = () => (S.campaign ? "campaign=" + S.campaign : "");
 
 /* ------------------------------------------------------------------ shell */
-const NAV0 = [["database", "All websites", "database"]];
+const NAV0 = [["database", "All websites", "database"], ["activity", "Activity", "history"]];
 const NAV1 = [["overview", "Overview", "overview"], ["websites", "Outreach", "outreach"], ["attention", "Needs you", "attention"]];
 const NAV2 = [["pitch", "Pitch email", "pitch"], ["settings", "Settings", "settings"]];
 function renderNav() {
   const att = S.data ? S.data.attention : 0;
-  const item = ([key, label, ic]) => '<a href="#/' + key + '" title="' + label + '"' + (S.route === key ? ' aria-current="page"' : "") + ">" + icon(ic, "nav-icon") + '<span class="nav-label">' + label + "</span>" + (key === "attention" && att ? '<span class="count">' + att + "</span>" : "") + "</a>";
+  const item = ([key, label, ic]) => '<a href="#/' + key + '" title="' + label + '"' + (S.route === key ? ' aria-current="page"' : "") + ">" + icon(ic, "nav-icon") + '<span class="nav-label">' + label + "</span>" + (key === "attention" && att ? '<span class="count">' + att + "</span>" : "") + (key === "activity" && S.data && S.data.changes_new && S.route !== "activity" ? '<span class="count sky">' + fmt(S.data.changes_new) + "</span>" : "") + "</a>";
   $("#nav0").innerHTML = NAV0.map(item).join("");
   $("#nav1").innerHTML = NAV1.map(item).join("");
   $("#nav2").innerHTML = NAV2.map(item).join("");
@@ -129,13 +130,14 @@ const mmss = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 /* ------------------------------------------------------------------ data */
 async function refresh() {
   try {
-    S.data = await api("/api/state?days=" + S.days + "&" + campQ());
+    S.data = await api("/api/state?days=" + S.days + "&seen=" + (store.get("almo-seen") || "") + "&" + campQ());
     S.statuses = S.data.statuses;
   } catch (e) { return; }
   renderNav(); renderCampaigns(); renderRunchip();
   if (S.route === "overview") renderOverview();
   if (["websites", "attention"].includes(S.route)) loadSites();
   if (S.route === "database" && !S.drawerEditing && Date.now() - (S.dbLoaded || 0) > 15000) loadDB();
+  if (S.route === "activity") loadActivity();
   if (S.drawer && !S.drawerEditing) openSite(S.drawer, true);
 }
 
@@ -274,7 +276,7 @@ const DB_DEFAULT = { q: "", country: "", stage: "", niches: [], price_min: "", p
 const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
-const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"]];
+const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"], ["builder", "Link builder contact"]];
 const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
 const numv = (v) => { const n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) && n > 0 && /^\s*\d/.test(String(v)) ? n : null; };
 /* What a topic costs: its own price, else the special-topics price, else the normal price when they just said yes. */
@@ -285,6 +287,14 @@ function topicPrice(r, k) {
   if (l === "yes") { const sp = numv(r.special_price), p = numv(r.price); return sp ? { p: sp } : p ? { p, base: true } : { yes: true }; }
   return v ? { text: v } : {};
 }
+const FIELD = { email: "Email", price: "Price", special_price: "Special topics price", casino: "Casino", loan: "Loans", crypto: "Crypto", adult: "Adult", sponsored_tag: "Marked sponsored", link_insertion: "Link insertion", requirements: "Requirements", country: "Country", dr: "DR", traffic: "Traffic", status: "Status" };
+function changeVal(field, v) {
+  if (v == null || String(v).trim() === "") return '<span class="unk">empty</span>';
+  if (field === "status") return esc((S.statuses || {})[v] || v);
+  if (["price", "special_price"].includes(field) || (["casino", "loan", "crypto", "adult", "link_insertion"].includes(field) && numv(v))) return numv(v) ? "€" + fmt(numv(v)) : esc(v);
+  const t = String(v); return esc(t.length > 80 ? t.slice(0, 80) + "…" : t);
+}
+const changeLine = (c) => "<b>" + esc(FIELD[c.field] || c.field) + "</b> " + changeVal(c.field, c.old_value) + ' <span class="arrow">→</span> ' + changeVal(c.field, c.new_value);
 /* Only what a site accepts: "Casino €610  Loans €632". "None" when it takes none. */
 const TOPICS = [["casino", "Casino"], ["loan", "Loans"], ["crypto", "Crypto"], ["adult", "Adult"]];
 function topicsCell(r) {
@@ -308,7 +318,7 @@ function topicCell(r, k) {
   if (t.text) return '<span class="tp" title="' + esc(t.text) + '">' + esc(t.text.slice(0, 10)) + "</span>";
   return '<span class="unk">–</span>';
 }
-const emailCell = (e) => e ? '<td class="l email"><span class="addr" title="' + esc(e) + '">' + esc(e) + '</span><button class="copy" data-copy="' + esc(e) + '" title="Copy email" aria-label="Copy ' + esc(e) + '">' + icon("copy") + "</button></td>" : '<td class="l email"><span class="unk">–</span></td>';
+const emailCell = (e, r) => e ? '<td class="l email"><span class="ecell"><span class="addr" title="' + esc(e) + '">' + esc(e) + "</span>" + (r && r.link_builder ? '<span class="lb" title="Not the website\'s own address' + (r.shared > 1 ? " - used for " + fmt(r.shared) + " websites" : "") + '">' + (r.shared >= 3 ? "Link builder" : "Other domain") + "</span>" : "") + '<button class="copy" data-copy="' + esc(e) + '" title="Copy email" aria-label="Copy ' + esc(e) + '">' + icon("copy") + "</button></span></td>" : '<td class="l email"><span class="unk">–</span></td>';
 const tagCell = (v) => { const l = String(v || "").toLowerCase(); return l === "yes" ? '<span class="tag-s m" title="Articles are marked as sponsored">Marked</span>' : l === "no" ? '<span class="tag-s u" title="Articles are not marked as sponsored">Not marked</span>' : v ? '<span class="tag-s" title="' + esc(v) + '">' + esc(String(v).slice(0, 14)) + "</span>" : '<span class="unk">–</span>'; };
 const numCell = (v) => { const n = parseFloat(String(v || "").replace(/,/g, "")); return isFinite(n) && String(v).trim() !== "" ? fmt(Math.round(n * 10) / 10) : '<span class="unk">–</span>'; };
 function dbQuery(extra) {
@@ -367,8 +377,8 @@ async function loadDB() {
   const colgroup = "<colgroup>" + [30, 220, 110, 230, 84, null, 84, 112, 56, 84, 130].map((w) => "<col" + (w ? ' style="width:' + w + 'px"' : "") + ">").join("") + "</colgroup>";
   $("#dbTbl").innerHTML = '<table class="dbt fixed">' + colgroup + '<thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
-      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" +
-      '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email) +
+      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + "</span></td>" +
+      '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email, r) +
       '<td class="num strong">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td>" +
       "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
@@ -386,7 +396,7 @@ function renderBulk() {
   const n = DB.all ? DB.total : DB.sel.size;
   if (!n) { b.classList.remove("on"); return; }
   b.innerHTML = "<b>" + fmt(n) + "</b>&nbsp;selected" + (!DB.all && DB.sel.size >= DB.rows.length && DB.total > DB.rows.length ? '<button class="linkbtn" data-bulk="all">Select all ' + fmt(DB.total) + "</button>" : "") +
-    '<span class="sep"></span><button class="ctl ctl--tiny ctl--primary" data-bulk="ask" title="Send your pitch to the ones Almo hasn\'t written to yet">Ask for prices</button><button class="ctl ctl--tiny" data-bulk="export">Export</button><button class="ctl ctl--tiny ctl--danger" data-bulk="remove">Remove</button><button class="ctl ctl--tiny ctl--icon" data-bulk="clear" title="Clear selection">' + icon("close") + "</button>";
+    '<span class="sep"></span><button class="ctl ctl--tiny ctl--primary" data-bulk="ask" title="Send your pitch to the ones Almo hasn\'t written to yet">Ask for prices</button><button class="ctl ctl--tiny" data-bulk="find_direct" title="Look on each website for its own address">Find own contacts</button><button class="ctl ctl--tiny" data-bulk="export">Export</button><button class="ctl ctl--tiny ctl--danger" data-bulk="remove">Remove</button><button class="ctl ctl--tiny ctl--icon" data-bulk="clear" title="Clear selection">' + icon("close") + "</button>";
   b.classList.add("on");
 }
 async function bulkDB(action) {
@@ -402,7 +412,7 @@ async function bulkDB(action) {
   body.action = action;
   try {
     const r = await api("/api/db/bulk", { body });
-    toast(action === "ask" ? (r.count ? r.count + " website" + (r.count === 1 ? "" : "s") + " queued - Almo will write to them" : "All of those were already contacted") : r.count + " removed");
+    toast(action === "find_direct" ? (r.count ? "Looking for the own contact of " + r.count + " website" + (r.count === 1 ? "" : "s") : "Already being checked") : action === "ask" ? (r.count ? r.count + " website" + (r.count === 1 ? "" : "s") + " queued - Almo will write to them" : "All of those were already contacted") : r.count + " removed");
     DB.sel.clear(); DB.all = false; loadDB(); refresh();
   } catch (e) { toast(e.message); }
 }
@@ -456,8 +466,11 @@ async function openSite(id, quiet) {
       '<div class="fld"><textarea id="draftIn" style="min-height:150px">' + esc(s.draft) + '</textarea></div><div style="margin-top:12px"><button class="ctl ctl--primary" data-sa="send_draft">Send follow-up</button></div></section>' : "") +
     '<section><div class="head"><h3 class="sec">Terms</h3>' + (edit ? "" : '<button class="ctl ctl--tiny" data-sa="edit">Edit</button>') + "</div>" + (edit ? editForm : facts + topics + (s.requirements ? '<p class="notes">' + esc(s.requirements) + "</p>" : "")) + "</section>" +
     '<section><div class="head"><h3 class="sec">Contact</h3></div><div class="inline"><div class="fld" style="flex:1"><input id="emailIn" value="' + esc(s.email) + '" placeholder="Add an email address"></div><button class="ctl" data-sa="set_email">Save email</button>' + (s.email ? '<button class="ctl ctl--icon" data-copy="' + esc(s.email) + '" title="Copy email">' + icon("copy") + "</button>" : "") + "</div>" +
+    (s.lookup ? '<p class="small hint-line"><span class="spin"></span> Looking on the website for its own address…</p>'
+      : d.contact.link_builder ? '<div class="lb-note"><span>' + (d.contact.shared >= 3 ? "This is a link builder's address, used for " + fmt(d.contact.shared) + " websites." : "This address isn't on the website's own domain.") + '</span><button class="ctl ctl--tiny" data-sa="find_direct">Find the site\'s own contact</button></div>' : "") +
     (s.emails.length > 1 ? '<p class="small" style="margin:10px 0 0">Also found: ' + s.emails.slice(1, 6).map(esc).join(", ") + "</p>" : "") + (s.fit_reason ? '<p class="small" style="margin:6px 0 0">Site check: ' + esc(s.fit_reason) + "</p>" : "") + "</section>" +
     '<section><div class="head"><h3 class="sec">Emails' + (d.thread.length ? ' <span class="count-inline">' + d.thread.length + "</span>" : "") + "</h3></div>" + thread + "</section>" +
+    (d.changes.length ? '<section><div class="head"><h3 class="sec">History</h3></div><div class="hist">' + d.changes.slice(0, 25).map((c) => '<div class="hist-row"><div class="what">' + changeLine(c) + '</div><div class="who">' + esc(c.actor) + " · " + ago(c.ts) + "</div></div>").join("") + "</div></section>" : "") +
     '<section class="dfoot"><button class="ctl ctl--tiny ctl--quiet-danger" data-sa="remove">Remove website</button></section></div>';
   if (!quiet) { dr.classList.add("open"); $("#scrim").classList.add("open"); dr.setAttribute("aria-hidden", "false"); dr.querySelector(".drawer-body").scrollTop = 0; }
   $$("input,textarea", dr).forEach((el) => { el.onfocus = () => (S.drawerEditing = true); });
@@ -477,7 +490,7 @@ async function siteAction(action) {
   if (action === "set_email") body.email = $("#emailIn").value;
   try {
     await api("/api/sites/" + id + "/action", { body });
-    toast({ save: "Saved", send_draft: "Follow-up sent", remove: "Removed", retry: "Checking again", complete: "Marked as done", reread: "Reading the reply again…", set_email: "Email updated", send_now: "Queued for sending", ask: "Queued - Almo will write to them" }[action] || "Done");
+    toast({ save: "Saved", send_draft: "Follow-up sent", remove: "Removed", retry: "Checking again", complete: "Marked as done", reread: "Reading the reply again…", set_email: "Email updated", send_now: "Queued for sending", find_direct: "Looking for the site's own contact…", ask: "Queued - Almo will write to them" }[action] || "Done");
     S.drawerEditing = false; S.drawerEdit = false;
     if (action === "remove") closeDrawer(); else openSite(id, true);
     if (S.route === "database") loadDB();
@@ -565,7 +578,7 @@ function renderSettings() {
     card("sending", "Sending", "Start with Test.",
       '<div class="seg" id="modes">' + [["off", "Off"], ["test", "Test"], ["live", "Live"]].map(([k, t]) => '<button data-mode="' + k + '" class="' + (st.send_mode === k ? "is-on" : "") + '"><span class="dot' + (k === "live" ? " on" : k === "test" ? " warn" : "") + '"></span>' + t + "</button>").join("") + '</div><p class="small mode-note">' + MODES[st.send_mode] + "</p>") +
     '<section class="sset" id="auto"><div class="sset-head"><h2 class="sec">Automation</h2><p>Limits, timing and the details Almo fills in for you.</p></div><div class="sset-body">' +
-      sw("check_sites", "Skip sites that don't publish articles") + sw("translate", "Translate the pitch to the site's language") + sw("auto_followup", "Reply automatically when details are missing") +
+      sw("check_sites", "Skip sites that don't publish articles") + sw("find_direct", "Look for the site's own contact when only a link builder's address is known") + sw("translate", "Translate the pitch to the site's language") + sw("auto_followup", "Reply automatically when details are missing") +
       '<div class="form-grid" style="margin-top:18px">' + num("daily_limit", "Default daily limit", "For new mailboxes") + num("nudge_days", "Reminder after (days)", "0 = no reminder") +
       '<div class="fld"><span class="label">Pause between emails (sec)</span><div class="inline"><input data-k="gap_min" value="' + st.gap_min + '"><span class="dim">–</span><input data-k="gap_max" value="' + st.gap_max + '"></div></div>' +
       '<div class="fld"><span class="label">Sending hours</span><div class="inline"><input data-k="work_start" value="' + st.work_start + '"><span class="dim">–</span><input data-k="work_end" value="' + st.work_end + '"></div></div>' +
@@ -685,6 +698,26 @@ async function saveSettings(quiet) {
   return true;
 }
 
+/* ------------------------------------------------------------------ activity */
+const ACT = { kind: "", q: "" };
+function renderActivity() {
+  $("#view").innerHTML = '<section><div class="toolbar"><input class="search" id="aq" placeholder="Search website or person" value="' + esc(ACT.q) + '"><div class="filter-tabs" id="akind">' +
+    [["", "All"], ["people", "People"], ["almo", "Almo"], ["import", "Imports"]].map(([k, l]) => '<button data-akind="' + k + '" class="' + (ACT.kind === k ? "is-on" : "") + '">' + l + "</button>").join("") +
+    '</div></div><div class="tablewrap" id="atbl"></div></section>';
+  $("#aq").oninput = (e) => { ACT.q = e.target.value; clearTimeout(renderActivity._t); renderActivity._t = setTimeout(loadActivity, 200); };
+  $$("[data-akind]").forEach((b) => (b.onclick = () => { ACT.kind = b.dataset.akind; renderActivity(); }));
+  loadActivity();
+}
+async function loadActivity() {
+  if (!$("#atbl")) return;
+  let d; try { d = await api("/api/changes?limit=300&kind=" + ACT.kind + "&q=" + encodeURIComponent(ACT.q)); } catch (e) { return; }
+  store.set("almo-seen", String(Date.now() / 1000));
+  if (S.data) { S.data.changes_new = 0; renderNav(); }
+  $("#atbl").innerHTML = !d.changes.length ? '<div class="empty"><strong>No changes yet</strong><p>Edits to websites show up here - by you, your team, Almo and imports.</p></div>'
+    : '<table class="dbt act"><thead><tr><th class="l">When</th><th class="l">Website</th><th class="l">Change</th><th class="l">By</th></tr></thead><tbody>' +
+      d.changes.map((c) => '<tr data-site="' + c.site_id + '"><td class="l muted when">' + ago(c.ts) + '</td><td class="site l"><span class="sn">' + fav(c.domain || "") + '<span class="dn">' + esc(c.domain || "(removed)") + '</span></span></td><td class="l change">' + changeLine(c) + '</td><td class="l muted">' + esc(c.actor) + "</td></tr>").join("") + "</tbody></table>";
+}
+
 /* ------------------------------------------------------------------ export */
 const EXP = { q: "", kind: store.get("almo-exp-kind") || "full" };
 function openExport(q, what) {
@@ -755,7 +788,7 @@ async function loadFile(file) {
 }
 
 /* ------------------------------------------------------------------ router */
-const TITLES = { overview: "Overview", database: "Website database", websites: "Outreach", attention: "Needs you", pitch: "Pitch email", settings: "Settings" };
+const TITLES = { activity: "Activity", overview: "Overview", database: "Website database", websites: "Outreach", attention: "Needs you", pitch: "Pitch email", settings: "Settings" };
 function route() {
   if (/^#\/prices/.test(location.hash)) { DBF.stage = "priced"; saveDBF(); location.replace("#/database"); return; }
   if ($("#addModal").classList.contains("open")) closeAdd();
@@ -766,7 +799,7 @@ function route() {
   S.route = TITLES[path] ? path : "overview";
   if (qs) { const f = new URLSearchParams(qs).get("f"); if (f) S.filter = Object.keys({ all: 1, progress: 1, waiting: 1, attention: 1, done: 1, closed: 1 }).includes(f) ? f : statusToTab(f); }
   $("#title").textContent = S.route === "overview" ? (S.data && S.campaign ? (S.data.campaigns.find((c) => c.id === S.campaign) || {}).name || "Overview" : "Overview") : TITLES[S.route];
-  const subs = { overview: S.data ? fmt(S.data.funnel[0].value) + " websites in outreach" : "", database: "Every website we know, across all campaigns", websites: "Websites Almo is working on", attention: "Replies that need a look", pitch: "The email each website gets, with A/B versions", settings: "Mailboxes, AI and sending" };
+  const subs = { overview: S.data ? fmt(S.data.funnel[0].value) + " websites in outreach" : "", database: "Every website we know, across all campaigns", activity: "Every change to the database, newest first", websites: "Websites Almo is working on", attention: "Replies that need a look", pitch: "The email each website gets, with A/B versions", settings: "Mailboxes, AI and sending" };
   $("#subtitle").textContent = subs[S.route];
   $("#range").style.display = S.route === "overview" ? "" : "none";
   renderNav();
@@ -775,6 +808,7 @@ function route() {
   else if (["websites", "attention"].includes(S.route)) { sitesShell(); loadSites(); }
   else if (S.route === "database") { if (S.prevRoute !== "database") resetDBF(); dbShell(); loadDB(); }
   else if (S.route === "pitch") renderPitch();
+  else if (S.route === "activity") renderActivity();
   else if (S.route === "settings") { S.boxEdit = null; S.boxProv = null; renderSettings(); }
   $(".content").scrollTop = 0;
   S.prevRoute = S.route;
@@ -914,5 +948,5 @@ window.addEventListener("hashchange", route);
 
 fetch("/web/logo.svg").then((r) => r.text()).then((svg) => ($("#logo").innerHTML = svg));
 (async () => { await refresh(); route(); })();
-setInterval(() => { if (document.hidden) return; if (S.route === "settings" || S.route === "pitch") { api("/api/state?days=" + S.days + "&" + campQ()).then((d) => { S.data = Object.assign(d, { settings: S.settingsDirty ? S.data.settings : d.settings }); renderNav(); renderRunchip(); }).catch(() => {}); } else refresh(); }, 4000);
+setInterval(() => { if (document.hidden) return; if (S.route === "settings" || S.route === "pitch") { api("/api/state?days=" + S.days + "&seen=" + (store.get("almo-seen") || "") + "&" + campQ()).then((d) => { S.data = Object.assign(d, { settings: S.settingsDirty ? S.data.settings : d.settings }); renderNav(); renderRunchip(); }).catch(() => {}); } else refresh(); }, 4000);
 })();

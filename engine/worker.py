@@ -18,6 +18,7 @@ from datetime import datetime
 
 import ai as ai_mod
 import bounces
+import contacts
 import countries
 import db
 import exporter
@@ -80,6 +81,7 @@ class Worker:
             stale = time.time() - 600
             conn.execute("UPDATE sites SET status='queued' WHERE status='reading' AND updated_at<?", (stale,))
             conn.execute("UPDATE sites SET status='ready' WHERE status='sending' AND updated_at<?", (stale,))
+            conn.execute("UPDATE sites SET lookup=1 WHERE lookup=2 AND updated_at<?", (stale,))
         self.thread = threading.Thread(target=self._loop, name="almo-worker", daemon=True)
         self.thread.start()
 
@@ -110,6 +112,7 @@ class Worker:
         cfg = settings.load()
         if cfg.get("running", True):
             self._stage_read(cfg)
+            self._stage_lookup(cfg)
             if cfg["send_mode"] != "off":
                 boxes = self.boxes()
                 if boxes:
@@ -146,20 +149,85 @@ class Worker:
                 continue
             self.pool.submit(self._read_one, site["id"], cfg)
 
+    # ------------------------------------------------------------------ #
+    # Link builders: find the website's own contact
+    # ------------------------------------------------------------------ #
+    def _is_link_builder(self, site):
+        row = db.one("SELECT COUNT(*) AS n FROM sites WHERE email=?", (site["email"],))
+        return contacts.is_link_builder(site["domain"], site["email"], row["n"] if row else 0)
+
+    def _direct_contact(self, site):
+        """Addresses on the site's own domain, best first ([] when none)."""
+        info = finder.read_site(site["domain"])
+        own = [e for e in info["emails"] if contacts.own_address(site["domain"], e)]
+        return own, info
+
+    def _stage_lookup(self, cfg):
+        with self.lock:
+            free = 4 - len(self.reading)
+        if free <= 0:
+            return
+        for site in db.sites("lookup=1", (), "id ASC", free):
+            with db.tx() as conn:
+                if conn.execute("UPDATE sites SET lookup=2 WHERE id=? AND lookup=1",
+                                (site["id"],)).rowcount != 1:
+                    continue        # another computer took it
+            with self.lock:
+                self.reading.add(site["id"])
+            self.pool.submit(self._lookup_one, site["id"])
+
+    def _lookup_one(self, site_id):
+        try:
+            site = db.get_site(site_id)
+            direct, info = self._direct_contact(site)
+            emails = site.get("emails") or ([site["email"]] if site["email"] else [])
+            if direct:
+                emails = list(dict.fromkeys(direct + emails))
+                if site.get("sent_at") and site["email"]:
+                    # Already writing to the old address - don't switch mid-conversation.
+                    db.update_site(site_id, emails=emails, lookup=0,
+                                   note="Own address found: %s (not used - a conversation is open)" % direct[0])
+                else:
+                    old = site["email"]
+                    db.update_site(site_id, email=direct[0], emails=emails, lookup=0,
+                                   note=("Own address found - %s kept as a backup" % old) if old else "")
+                db.log("find", "Found the site's own address %s" % direct[0], site_id)
+            else:
+                db.update_site(site_id, lookup=0, note="No own address on the website" +
+                               ("" if info["ok"] else " (the site didn't load)"))
+                db.log("warn", "No own address found on the website", site_id)
+        except Exception as exc:
+            traceback.print_exc()
+            db.update_site(site_id, lookup=0, note="Couldn't check the site: %s" % str(exc)[:120])
+        finally:
+            with self.lock:
+                self.reading.discard(site_id)
+            self.dirty = True
+
     def _read_one(self, site_id, cfg):
         try:
             site = db.get_site(site_id)
             if site.get("email"):
-                # Already in the database with a contact - no need to scrape or
-                # re-check the site, go straight to sending.
-                emails = site.get("emails") or [site["email"]]
-                if site["email"] not in emails:
-                    emails = [site["email"]] + emails
-                db.update_site(site_id, status="ready", emails=emails,
-                               tried=list(dict.fromkeys((site.get("tried") or []) + [site["email"]])),
+                # Already in the database with a contact - no need to re-check
+                # the site. Only when that contact is a link builder's address
+                # does Almo first look for the site's own one.
+                email, note = site["email"], "Email from the database"
+                emails = site.get("emails") or [email]
+                if email not in emails:
+                    emails = [email] + emails
+                if cfg.get("find_direct", True) and self._is_link_builder(site):
+                    direct, _info = self._direct_contact(site)
+                    if direct:
+                        emails = list(dict.fromkeys(direct + emails))
+                        db.log("find", "Found the site's own address %s instead of %s" % (direct[0], email), site_id)
+                        email, note = direct[0], "Own address found - %s kept as a backup" % site["email"]
+                    else:
+                        note = "Only a link builder's address is known"
+                db.update_site(site_id, status="ready", email=email, emails=emails,
+                               tried=list(dict.fromkeys((site.get("tried") or []) + [email])),
                                language=site.get("language") or countries.language_for(site["domain"]),
-                               note="Email from the database")
-                db.log("find", "Using %s from the database" % site["email"], site_id)
+                               note=note)
+                db.log("find", "Using %s" % email, site_id)
                 return
             info = finder.read_site(site["domain"])
             fields = {"language": info["language"], "emails": info["emails"]}

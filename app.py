@@ -17,9 +17,21 @@ from datetime import datetime, timedelta
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "engine"))
 
-from flask import Flask, jsonify, request, send_file, send_from_directory  # noqa: E402
+import envfile  # noqa: E402
+
+envfile.load(HERE)          # before anything reads its settings
+
+import html as html_mod  # noqa: E402
+import secrets  # noqa: E402
+from urllib.parse import quote  # noqa: E402
+
+from flask import (Flask, jsonify, redirect, request, send_file,  # noqa: E402
+                   send_from_directory, session)
+from werkzeug.middleware.proxy_fix import ProxyFix  # noqa: E402
 
 import ai as ai_mod  # noqa: E402
+import auth  # noqa: E402
+import contacts  # noqa: E402
 import db  # noqa: E402
 import exporter  # noqa: E402
 import finder  # noqa: E402
@@ -29,11 +41,22 @@ from worker import STATUS, Worker  # noqa: E402
 
 PORT = int(os.environ.get("ALMO_PORT", "8765"))
 app = Flask(__name__, static_folder=None)
+# Behind NGINX on a server: trust its X-Forwarded-* so https and the domain are right.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+app.config.update(
+    SESSION_COOKIE_NAME="almo_session",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=not os.environ.get("ALMO_INSECURE_COOKIES"),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    MAX_CONTENT_LENGTH=50 * 1024 * 1024,
+)
+app.secret_key = auth.secret_key()
 worker = Worker()
 
 FILTERS = {
     "all": None,
-    "progress": ("queued", "reading", "ready"),
+    "progress": ("queued", "reading", "ready", "sending"),
     "waiting": ("waiting", "followed_up"),
     "attention": ("needs_you", "replied", "error"),
     "done": ("complete",),
@@ -51,9 +74,167 @@ def _campaign_arg():
 
 
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Sign-in
+# --------------------------------------------------------------------------- #
+OPEN_PATHS = {"/login", "/auth/google", "/auth/callback", "/logout", "/web/app.css", "/web/logo.svg"}
+LOGIN_ERRORS = {
+    "domain": "{email} isn't an Uprankd account. Sign in with your @{domain} Google account.",
+    "person": "{email} doesn't have access to Outreach yet. Ask the admin to add you.",
+    "cancelled": "Sign-in was cancelled.",
+    "expired": "That sign-in took too long. Please try again.",
+    "failed": "Google sign-in didn't work. Please try again.",
+}
+
+
+PROXY_HEADERS = ("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP",
+                 "Forwarded", "Via")
+
+
+def _local_request():
+    """Straight from this computer, not through a proxy or the network.
+    ALMO_SERVER=1 (set on servers) means never trust that."""
+    if os.environ.get("ALMO_SERVER"):
+        return False
+    return request.remote_addr in ("127.0.0.1", "::1") and \
+        not any(request.headers.get(h) for h in PROXY_HEADERS) and \
+        request.host.split(":")[0] in ("127.0.0.1", "localhost", "[::1]")
+
+
+@app.before_request
+def guard():
+    db.set_actor("You")
+    if request.path in OPEN_PATHS:
+        return None
+    cfg = auth.config()
+    if cfg is None:
+        if _local_request():
+            return None                 # a Mac running Almo for one person
+        msg = ("Sign-in isn't set up, so Almo won't open over the network. "
+               "Add google_oauth.json - see docs/RUNCLOUD.md.")
+        if request.path.startswith("/api/"):
+            return jsonify({"error": msg}), 403
+        return msg, 403
+    user = session.get("user")
+    if user and auth.allowed(cfg, user):
+        db.set_actor(user.get("name") or user.get("email") or "You")
+        return None
+    session.pop("user", None)
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Please sign in again", "login": True}), 401
+    nxt = request.full_path.rstrip("?")
+    return redirect("/login" + ("?next=" + quote(nxt) if nxt not in ("/", "") else ""))
+
+
+def _safe_next(value):
+    value = value or "/"
+    return value if value.startswith("/") and not value.startswith("//") else "/"
+
+
+def _redirect_uri():
+    base = os.environ.get("ALMO_PUBLIC_URL", "").rstrip("/") or request.host_url.rstrip("/")
+    return base + "/auth/callback"
+
+
+@app.teardown_request
+def _forget_actor(_exc=None):
+    db.set_actor("")
+
+
+@app.get("/login")
+def login():
+    cfg = auth.config()
+    if cfg is None:
+        return redirect("/")
+    if session.get("user") and auth.allowed(cfg, session["user"]):
+        return redirect(_safe_next(request.args.get("next")))
+    code = request.args.get("error", "")
+    message = ""
+    if code in LOGIN_ERRORS:
+        text = LOGIN_ERRORS[code].format(email=request.args.get("email") or "That account",
+                                         domain=cfg["domain"])
+        message = '<div class="login-error" role="alert">%s</div>' % html_mod.escape(text)
+    elif request.args.get("signed_out"):
+        message = '<div class="login-note">You\'re signed out.</div>'
+    nxt = request.args.get("next")
+    page = open(os.path.join(HERE, "web", "login.html"), encoding="utf-8").read()
+    page = (page.replace("%(message)s", message)
+                .replace("%(next)s", ("?next=" + quote(_safe_next(nxt))) if nxt else "")
+                .replace("%(domain)s", html_mod.escape(cfg["domain"])))
+    return page, 200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}
+
+
+@app.get("/auth/google")
+def auth_google():
+    cfg = auth.config()
+    if cfg is None:
+        return redirect("/")
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    session["oauth"] = {"state": state, "nonce": nonce, "next": _safe_next(request.args.get("next")),
+                        "ts": time.time()}
+    return redirect(auth.authorize_url(cfg, _redirect_uri(), state, nonce))
+
+
+@app.get("/auth/callback")
+def auth_callback():
+    cfg = auth.config()
+    if cfg is None:
+        return redirect("/")
+    pending = session.pop("oauth", None) or {}
+    if request.args.get("error"):
+        return redirect("/login?error=cancelled")
+    if not pending or request.args.get("state") != pending.get("state") \
+            or time.time() - pending.get("ts", 0) > 600:
+        return redirect("/login?error=expired")
+    try:
+        claims = auth.exchange(cfg, request.args.get("code", ""), _redirect_uri())
+        user = auth.check(cfg, claims, pending.get("nonce"))
+    except auth.AuthError as exc:
+        q = "/login?error=" + exc.code
+        if exc.email:
+            q += "&email=" + quote(exc.email)
+        return redirect(q)
+    session.clear()
+    session["user"] = user
+    session.permanent = True
+    db.log("info", "%s signed in" % user["email"])
+    return redirect(pending.get("next") or "/")
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect("/login?signed_out=1" if auth.config() else "/")
+
+
 @app.get("/")
 def index():
-    return send_from_directory(os.path.join(HERE, "web"), "index.html")
+    # The page asks for app.js/app.css with this build's stamp, so a browser
+    # never keeps showing an older version after an update.
+    with open(os.path.join(HERE, "web", "index.html"), encoding="utf-8") as f:
+        page = f.read()
+    v = build_id()
+    page = page.replace('/web/app.js"', '/web/app.js?v=%s"' % v).replace('/web/app.css"', '/web/app.css?v=%s"' % v)
+    return page, 200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}
+
+
+def build_id():
+    """Changes whenever the app's own files change."""
+    stamp = 0
+    for name in ("app.py", "web/app.js", "web/app.css", "web/index.html"):
+        try:
+            stamp = max(stamp, int(os.path.getmtime(os.path.join(HERE, name))))
+        except OSError:
+            pass
+    return "%x" % stamp
+
+
+STARTED_BUILD = build_id()     # the code this process is actually running
+
+
+@app.get("/api/version")
+def version():
+    return jsonify({"folder": HERE, "build": STARTED_BUILD})
 
 
 @app.get("/web/<path:name>")
@@ -68,7 +249,7 @@ def state():
     days = max(1, min(365, int(request.args.get("days") or 30)))
     now = time.time()
     start, prev = now - days * 86400, now - 2 * days * 86400
-    cw, ca = ("campaign_id=?", (camp,)) if camp else ("1=1", ())
+    cw, ca = ("campaign_id=? AND NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))", (camp,)) if camp else ("NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))", ())
 
     def count(cond, args=(), lo=None, hi=None, field="created_at"):
         sql = "SELECT COUNT(*) AS n FROM sites WHERE %s AND %s" % (cw, cond)
@@ -78,7 +259,7 @@ def state():
             a += [lo, hi]
         return db.one(sql, tuple(a))["n"]
 
-    price_ok = "price<>'' AND lower(price)<>'unknown'"
+    price_ok = "replied_at IS NOT NULL AND price<>'' AND lower(price)<>'unknown'"
     metrics = []
     for key, label, cond, field in (
         ("added", "Websites added", "1=1", "created_at"),
@@ -131,22 +312,27 @@ def state():
 
     cfg = settings.load()
     missing = settings.ready_to_send(cfg)
+    boxes = settings.public_mailboxes()
     setup = [
-        {"key": "account", "label": "Connect your email", "done": not any(
-            m in missing for m in ("your email address", "an app password"))},
-        {"key": "name", "label": "Add your name for the signature", "done": bool(cfg.get("sender_name"))},
-        {"key": "ai", "label": "Add an Anthropic API key", "done": bool(cfg.get("anthropic_key"))},
+        {"key": "account", "label": "Connect a mailbox", "done": any(b["password_set"] for b in boxes)},
+        {"key": "name", "label": "Add your name for the signature",
+         "done": any(b["sender_name"] for b in boxes)},
+        {"key": "ai", "label": "Add an AI key", "done": ai_mod.make(cfg) is not None},
         {"key": "sites", "label": "Add websites", "done": total("1=1") > 0},
         {"key": "send", "label": "Turn on sending", "done": cfg["send_mode"] != "off"},
     ]
     return jsonify({
         "metrics": metrics, "series": series, "funnel": funnel, "by_status": by_status,
         "statuses": STATUS, "events": db.events(30),
-        "campaigns": db.query("SELECT c.*, (SELECT COUNT(*) FROM sites s WHERE s.campaign_id=c.id) AS n "
+        "campaigns": db.query("SELECT c.*, (SELECT COUNT(*) FROM sites s WHERE s.campaign_id=c.id AND "
+                              "NOT (s.status IN ('in_db','own') OR (s.source='import' AND s.sent_at IS NULL "
+                              "AND s.status='declined'))) AS n "
                               "FROM campaigns c ORDER BY c.id"),
         "settings": settings.public(), "missing": missing, "setup": setup,
+        "user": session.get("user") if auth.config() else None,
         "worker": worker.status(cfg),
         "attention": total("status IN ('needs_you','replied','error')"),
+        "changes_new": _unseen_changes(),
         "days": days,
     })
 
@@ -156,7 +342,7 @@ def list_sites():
     camp = _campaign_arg()
     f = request.args.get("filter") or "all"
     q = (request.args.get("q") or "").strip().lower()
-    where, args = ["1=1"], []
+    where, args = ["NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))"], []
     if camp:
         where.append("campaign_id=?")
         args.append(camp)
@@ -167,12 +353,12 @@ def list_sites():
     if f == "prices":
         where.append("price<>'' AND lower(price)<>'unknown'")
     if q:
-        where.append("(domain LIKE ? OR email LIKE ?)")
+        where.append("(lower(domain) LIKE ? OR lower(email) LIKE ?)")
         args += ["%" + q + "%", "%" + q + "%"]
     rows = db.sites(" AND ".join(where), tuple(args), "updated_at DESC", 2000)
     counts = {}
     for key, sts in FILTERS.items():
-        w, a = (["campaign_id=?"], [camp]) if camp else ([], [])
+        w, a = (["campaign_id=?", "NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))"], [camp]) if camp else (["NOT (status IN ('in_db','own') OR (source='import' AND sent_at IS NULL AND status='declined'))"], [])
         if sts:
             w.append("status IN (%s)" % ",".join("?" * len(sts)))
             a += list(sts)
@@ -186,8 +372,11 @@ def site_detail(sid):
     site = db.get_site(sid)
     if not site:
         return jsonify({"error": "Not found"}), 404
+    shared = db.one("SELECT COUNT(*) AS n FROM sites WHERE email=?", (site["email"],))["n"] if site["email"] else 0
     return jsonify({"site": site, "thread": db.thread(sid), "events": db.events(50, sid),
-                    "statuses": STATUS})
+                    "changes": db.changes(sid, 60), "statuses": STATUS,
+                    "contact": {"link_builder": contacts.is_link_builder(site["domain"], site["email"], shared),
+                                "shared": shared}})
 
 
 @app.post("/api/sites")
@@ -235,6 +424,19 @@ def upload():
     return jsonify({"text": "\n".join(domains), "count": len(domains)})
 
 
+def _unseen_changes():
+    """Changes by other people or by Almo since this browser last opened Activity."""
+    try:
+        seen = float(request.args.get("seen") or 0)
+    except ValueError:
+        seen = 0
+    if not seen:
+        return 0
+    me = db.actor()
+    row = db.one("SELECT COUNT(*) AS n FROM changes WHERE ts>? AND actor<>? AND field<>'status'", (seen, me))
+    return row["n"] if row else 0
+
+
 @app.post("/api/sites/<int:sid>/action")
 def site_action(sid):
     data = request.json or {}
@@ -258,6 +460,10 @@ def site_action(sid):
         status = "ready" if not site["sent_at"] else site["status"]
         db.update_site(sid, email=email, emails=emails, tried=site["tried"] + [email],
                        status=status, note="")
+    elif action == "ask":
+        if site["sent_at"]:
+            return jsonify({"error": "Almo has already written to this website"}), 400
+        db.update_site(sid, status="queued", attempts=0, next_try_at=0, note="")
     elif action == "remove":
         db.delete_site(sid)
         worker.dirty = True
@@ -267,8 +473,8 @@ def site_action(sid):
     elif action == "close":
         db.update_site(sid, status="declined", note="Closed by you", draft="")
     elif action == "save":
-        fields = {k: str(v) for k, v in (data.get("fields") or {}).items()
-                  if k in ai_mod.FIELDS + ("requirements", "note")}
+        fields = {k: str(v).strip() for k, v in (data.get("fields") or {}).items()
+                  if k in ai_mod.FIELDS + ("requirements", "note", "country", "dr", "traffic")}
         db.update_site(sid, **fields)
     elif action == "send_draft":
         body = (data.get("body") or site["draft"] or "").strip()
@@ -281,6 +487,8 @@ def site_action(sid):
             return jsonify({"error": "Sending is off - turn it on in Settings"}), 400
         if not worker.send_followup(cfg, sid, body):
             return jsonify({"error": worker.send_error or "Couldn't send"}), 400
+    elif action == "find_direct":
+        db.update_site(sid, lookup=1, note="Looking for the site's own address…")
     elif action == "reread":
         threading.Thread(target=worker.process_reply, args=(cfg, sid), daemon=True).start()
     else:
@@ -312,9 +520,15 @@ def preview(cid):
     cfg = settings.load()
     site = {"campaign_id": cid, "domain": request.args.get("domain") or "example.lv",
             "language": request.args.get("lang") or ""}
-    subject, body = worker.compose_pitch(cfg, site)
+    pitch = None
+    if request.args.get("pitch"):
+        pitch = db.one("SELECT * FROM pitches WHERE id=?", (int(request.args["pitch"]),))
+    subject, body = worker.compose_pitch(cfg, site, pitch)
+    boxes = settings.mailboxes(with_secrets=False)
+    if boxes:
+        cfg = settings.box_cfg(cfg, boxes[0])
     msg = mail.build_message({**cfg, "email": cfg.get("email") or "you@example.com"},
-                             "them@" + site["domain"], subject, body)
+                             "them@" + site["domain"], subject, body, logo_src=mail.logo_data_uri())
     html_part = msg.get_body(("html",)).get_content()
     return jsonify({"subject": subject, "html": html_part})
 
@@ -328,16 +542,63 @@ def get_settings():
 @app.post("/api/settings")
 def post_settings():
     problems = settings.save(request.json or {})
-    worker._smtp = None if hasattr(worker, "_smtp") else None
-    worker.poke()
+    worker.reset_connections()
     return jsonify({"ok": not problems, "problems": problems, "settings": settings.public()})
+
+
+@app.get("/api/mailboxes")
+def list_mailboxes():
+    return jsonify({"mailboxes": settings.public_mailboxes(), "providers": _providers()})
+
+
+def _providers():
+    return {k: {"smtp": v["smtp"], "imap": v["imap"], "help": v["help"],
+                "editable": bool(v.get("editable"))} for k, v in settings.PROVIDERS.items()}
+
+
+@app.post("/api/mailboxes")
+def add_mailbox():
+    box_id, problems = settings.save_mailbox(request.json or {})
+    if problems:
+        return jsonify({"error": "; ".join(problems)}), 400
+    db.log("info", "Mailbox added: %s" % settings.mailbox(box_id)["email"])
+    worker.reset_connections()
+    return jsonify({"ok": True, "id": box_id, "mailboxes": settings.public_mailboxes()})
+
+
+@app.put("/api/mailboxes/<int:box_id>")
+def edit_mailbox(box_id):
+    if not settings.mailbox(box_id):
+        return jsonify({"error": "Not found"}), 404
+    _, problems = settings.save_mailbox(request.json or {}, box_id)
+    if problems:
+        return jsonify({"error": "; ".join(problems)}), 400
+    worker.reset_connections()
+    return jsonify({"ok": True, "mailboxes": settings.public_mailboxes()})
+
+
+@app.delete("/api/mailboxes/<int:box_id>")
+def remove_mailbox(box_id):
+    box = settings.mailbox(box_id)
+    if not box:
+        return jsonify({"error": "Not found"}), 404
+    open_threads = db.one("SELECT COUNT(*) AS n FROM sites WHERE mailbox_id=? AND status IN "
+                          "('waiting','followed_up','replied','needs_you')", (box_id,))["n"]
+    settings.delete_mailbox(box_id)
+    db.log("info", "Mailbox removed: %s" % box["email"])
+    worker.reset_connections()
+    return jsonify({"ok": True, "open_threads": open_threads, "mailboxes": settings.public_mailboxes()})
 
 
 @app.post("/api/test/email")
 def test_email():
-    cfg = settings.load()
-    if not cfg.get("email") or not cfg.get("email_password"):
-        return jsonify({"ok": False, "error": "Enter your email and app password first"})
+    data = request.json or {}
+    box = settings.mailbox(int(data.get("id") or 0)) if data.get("id") else None
+    if not box:
+        return jsonify({"ok": False, "error": "Save the mailbox first"})
+    if not box.get("password"):
+        return jsonify({"ok": False, "error": "Enter the app password first"})
+    cfg = settings.box_cfg(settings.load(), box)
     try:
         mail.test_send(cfg)
         mail.test_read(cfg)
@@ -352,7 +613,10 @@ def test_email():
 def test_ai():
     cfg = settings.load()
     try:
-        ai_mod.AI(cfg["anthropic_key"], cfg["model_smart"], cfg["model_fast"]).test()
+        client = ai_mod.make(cfg)
+        if client is None:
+            return jsonify({"ok": False, "error": "Enter the API key first"})
+        client.test()
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
     return jsonify({"ok": True})
@@ -362,12 +626,74 @@ def test_ai():
 def new_campaign():
     data = request.json or {}
     name = (data.get("name") or "").strip() or "New campaign"
-    base = db.one("SELECT subject, body FROM campaigns ORDER BY id LIMIT 1")
+    base = db.one("SELECT subject, body FROM pitches ORDER BY id LIMIT 1") or \
+        {"subject": db.DEFAULT_SUBJECT, "body": db.DEFAULT_BODY}
     with db.tx() as conn:
-        cur = conn.execute("INSERT INTO campaigns (name, subject, body, created_at) VALUES (?,?,?,?)",
-                           (name, base["subject"], base["body"], time.time()))
-        cid = cur.lastrowid
+        cid = db.insert(conn, "INSERT INTO campaigns (name, subject, body, created_at) VALUES (?,?,?,?)",
+                        (name, base["subject"], base["body"], time.time()))
+        conn.execute("INSERT INTO pitches (campaign_id, label, subject, body, active, created_at) "
+                     "VALUES (?,?,?,?,1,?)", (cid, "A", base["subject"], base["body"], time.time()))
     return jsonify({"id": cid})
+
+
+# --------------------------------------------------------------------------- #
+# Pitch variants (A/B testing)
+# --------------------------------------------------------------------------- #
+@app.get("/api/campaigns/<int:cid>/pitches")
+def list_pitches(cid):
+    return jsonify({"pitches": db.pitches(cid)})
+
+
+@app.post("/api/campaigns/<int:cid>/pitches")
+def add_pitch(cid):
+    if not db.one("SELECT id FROM campaigns WHERE id=?", (cid,)):
+        return jsonify({"error": "Not found"}), 404
+    data = request.json or {}
+    have = [p["label"] for p in db.pitches(cid)]
+    label = next(c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if c not in have) if len(have) < 26 else str(len(have) + 1)
+    src = db.one("SELECT subject, body FROM pitches WHERE id=?", (int(data.get("copy") or 0),)) or \
+        (db.pitches(cid) or [{"subject": db.DEFAULT_SUBJECT, "body": db.DEFAULT_BODY}])[0]
+    with db.tx() as conn:
+        pid = db.insert(conn, "INSERT INTO pitches (campaign_id, label, subject, body, active, created_at) "
+                        "VALUES (?,?,?,?,1,?)", (cid, label, src["subject"], src["body"], time.time()))
+    return jsonify({"ok": True, "id": pid, "pitches": db.pitches(cid)})
+
+
+@app.put("/api/pitches/<int:pid>")
+def edit_pitch(pid):
+    p = db.one("SELECT * FROM pitches WHERE id=?", (pid,))
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    data = request.json or {}
+    fields = {k: (data[k] or "").strip() for k in ("subject", "body") if k in data}
+    if any(not v for v in fields.values()):
+        return jsonify({"error": "Subject and message can't be empty"}), 400
+    if "active" in data:
+        fields["active"] = 1 if data["active"] else 0
+        if not data["active"] and not db.one("SELECT 1 AS x FROM pitches WHERE campaign_id=? AND id<>? "
+                                             "AND active=1", (p["campaign_id"], pid)):
+            return jsonify({"error": "At least one pitch has to stay on"}), 400
+    if fields:
+        with db.tx() as conn:
+            conn.execute("UPDATE pitches SET %s WHERE id=?" % ", ".join("%s=?" % k for k in fields),
+                         (*fields.values(), pid))
+    return jsonify({"ok": True, "pitches": db.pitches(p["campaign_id"])})
+
+
+@app.delete("/api/pitches/<int:pid>")
+def delete_pitch(pid):
+    p = db.one("SELECT * FROM pitches WHERE id=?", (pid,))
+    if not p:
+        return jsonify({"error": "Not found"}), 404
+    if db.one("SELECT 1 AS x FROM sites WHERE pitch_id=? AND sent_at IS NOT NULL LIMIT 1", (pid,)):
+        return jsonify({"error": "Pitch %s has been sent already - turn it off instead, so its "
+                                 "results stay" % p["label"]}), 400
+    if len(db.pitches(p["campaign_id"])) <= 1:
+        return jsonify({"error": "A campaign needs at least one pitch"}), 400
+    with db.tx() as conn:
+        conn.execute("DELETE FROM pitches WHERE id=?", (pid,))
+        conn.execute("UPDATE sites SET pitch_id=NULL WHERE pitch_id=?", (pid,))
+    return jsonify({"ok": True, "pitches": db.pitches(p["campaign_id"])})
 
 
 @app.put("/api/campaigns/<int:cid>")
@@ -391,6 +717,7 @@ def delete_campaign(cid):
     first = db.one("SELECT id FROM campaigns WHERE id<>? ORDER BY id", (cid,))["id"]
     with db.tx() as conn:
         conn.execute("UPDATE sites SET campaign_id=? WHERE campaign_id=?", (first, cid))
+        conn.execute("UPDATE pitches SET active=0, campaign_id=? WHERE campaign_id=?", (-cid, cid))
         conn.execute("DELETE FROM campaigns WHERE id=?", (cid,))
     return jsonify({"ok": True, "moved_to": first})
 
@@ -408,13 +735,223 @@ def inbox_now():
     return jsonify({"ok": True})
 
 
+
+# --------------------------------------------------------------------------- #
+# Website database
+# --------------------------------------------------------------------------- #
+STAGES = {
+    "never": "status='in_db'",
+    "outreach": "status IN ('queued','reading','ready','sending','waiting','followed_up','replied','needs_you')",
+    "priced": "price<>'' AND lower(price)<>'unknown'",
+    "noprice": "(price='' OR lower(price)='unknown')",
+    "closed": "status IN ('not_fit','no_email','declined','no_reply','bounced','error','own')",
+}
+SORTS = {
+    "domain": "domain", "country": "country", "status": "status", "updated": "updated_at",
+    "price": "num(price)", "special": "num(special_price)",
+    "dr": "num(dr)", "traffic": "num(REPLACE(traffic,',',''))",
+    "link": "link_insertion", "email": "email", "sponsored": "sponsored_tag",
+}
+NUM = "num(price)"
+# A topic is accepted when it says Yes or carries its own price.
+ACCEPTS = "(lower(%s)='yes' OR num(%s) IS NOT NULL)"
+
+
+def db_where(a):
+    where, args = ["1=1"], []
+    camp = int(a.get("campaign") or 0)
+    if camp:
+        where.append("campaign_id=?")
+        args.append(camp)
+    q = (a.get("q") or "").strip().lower()
+    if q:
+        where.append("(lower(domain) LIKE ? OR lower(email) LIKE ? OR lower(requirements) LIKE ?)")
+        args += ["%" + q + "%"] * 3
+    if a.get("country"):
+        where.append("country=?")
+        args.append(a["country"])
+    for key, op in (("price_min", ">="), ("price_max", "<=")):
+        try:
+            v = float(a.get(key) or "")
+            where.append("%s %s ?" % (NUM, op))
+            args.append(v)
+        except ValueError:
+            pass
+    for n in [x for x in (a.get("niches") or "").split(",") if x]:
+        if n in ("casino", "loan", "crypto", "adult"):
+            where.append(ACCEPTS % (n, n))
+        elif n == "link":
+            where.append("(lower(link_insertion)='yes' OR num(link_insertion) IS NOT NULL)")
+        elif n == "unmarked":
+            where.append("lower(sponsored_tag)='no'")
+        elif n == "builder":
+            ids = _link_builder_ids()
+            where.append("id IN (%s)" % (",".join(str(i) for i in ids) or "0"))
+    stage = a.get("stage")
+    if stage in STAGES:
+        where.append(STAGES[stage])
+    return " AND ".join(where), args
+
+
+def _link_builder_ids():
+    shared = contacts.shared_counts()
+    return [r["id"] for r in db.query("SELECT id, domain, email FROM sites WHERE email<>''")
+            if contacts.is_link_builder(r["domain"], r["email"], shared.get(r["email"], 1))]
+
+
+@app.get("/api/db")
+def db_list():
+    a = request.args
+    where, args = db_where(a)
+    sort = SORTS.get(a.get("sort") or "", "updated_at")
+    direction = "ASC" if a.get("dir") == "asc" else "DESC"
+    per = max(25, min(2000, int(a.get("per") or 2000)))
+    page = max(0, int(a.get("page") or 0))
+    text_sort = sort in ("domain", "country", "status", "link_insertion", "email", "sponsored_tag")
+    nulls = "(%s IS NULL OR %s='')" % (sort, sort) if text_sort else "%s IS NULL" % sort
+    rows = db.query("SELECT id, domain, country, email, status, price, special_price, casino, loan, "
+                    "crypto, adult, sponsored_tag, link_insertion, requirements, dr, traffic, "
+                    "sent_at, replied_at, updated_at, source, note FROM sites WHERE %s "
+                    "ORDER BY %s, %s %s, domain ASC LIMIT ? OFFSET ?" % (where, nulls, sort, direction),
+                    tuple(args) + (per, page * per))
+    total = db.one("SELECT COUNT(*) AS n FROM sites WHERE %s" % where, tuple(args))["n"]
+    priced = db.one("SELECT COUNT(*) AS n, AVG(%s) AS avg, MIN(%s) AS lo, MAX(%s) AS hi FROM sites "
+                    "WHERE %s AND %s" % (NUM, NUM, NUM, where, STAGES["priced"]), tuple(args))
+    casino = db.one("SELECT COUNT(*) AS n FROM sites WHERE %s AND %s" % (where, ACCEPTS % ("casino", "casino")),
+                    tuple(args))["n"]
+    countries_ = db.query("SELECT country, COUNT(*) AS n FROM sites WHERE country<>'' "
+                          "GROUP BY country ORDER BY n DESC")
+    prices = sorted(v for v in (db._num(r["p"]) for r in db.query(
+        "SELECT price AS p FROM sites WHERE %s AND %s" % (where, STAGES["priced"]), tuple(args))) if v)
+    median = prices[len(prices) // 2] if prices else 0
+    shared = contacts.shared_counts()
+    recent = {}
+    if rows:
+        marks = ",".join(str(int(r["id"])) for r in rows)
+        for c in db.query("SELECT site_id, ts, field, actor FROM changes WHERE ts>? AND site_id IN (%s) "
+                          "AND field<>'status' ORDER BY ts ASC" % marks, (time.time() - 86400,)):
+            recent[c["site_id"]] = c
+    for r in rows:
+        n = shared.get(r["email"], 1) if r["email"] else 0
+        r["link_builder"] = contacts.is_link_builder(r["domain"], r["email"], n)
+        r["shared"] = n
+        r["changed"] = recent.get(r["id"])
+    return jsonify({"rows": rows, "total": total, "page": page, "per": per,
+                    "summary": {"total": total, "priced": priced["n"], "median": round(median),
+                                "avg": round(priced["avg"] or 0), "lo": priced["lo"],
+                                "hi": priced["hi"], "casino": casino},
+                    "countries": countries_, "statuses": STATUS})
+
+
+@app.get("/api/changes")
+def list_changes():
+    a = request.args
+    try:
+        since = float(a.get("since") or 0)
+    except ValueError:
+        since = 0
+    rows = db.changes(None, min(500, int(a.get("limit") or 200)), since, a.get("kind") or "")
+    q = (a.get("q") or "").strip().lower()
+    if q:
+        rows = [r for r in rows if q in (r.get("domain") or "") or q in (r.get("actor") or "").lower()]
+    return jsonify({"changes": rows, "statuses": STATUS})
+
+
+@app.post("/api/db/import")
+def db_import():
+    import importer
+
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "No file"}), 400
+    raw = f.read()
+    try:
+        if request.args.get("preview"):
+            return jsonify(importer.preview(f.filename, raw))
+        camp = int(request.form.get("campaign_id") or 0) or None
+        stats = importer.run(f.filename, raw, camp)
+    except Exception as exc:
+        return jsonify({"error": "Couldn't read that file: %s" % str(exc)[:160]}), 400
+    worker.dirty = True
+    return jsonify(stats)
+
+
+@app.post("/api/db/bulk")
+def db_bulk():
+    data = request.json or {}
+    action = data.get("action")
+    ids = [int(i) for i in data.get("ids") or []]
+    if data.get("all"):
+        where, args = db_where(data.get("filters") or {})
+        ids = [r["id"] for r in db.query("SELECT id FROM sites WHERE %s" % where, tuple(args))]
+    if not ids:
+        return jsonify({"error": "Nothing selected"}), 400
+    marks = ",".join("?" * len(ids))
+    with db.tx() as conn:
+        if action == "ask":
+            # Only websites Almo hasn't written to yet; others are left alone.
+            cur = conn.execute("UPDATE sites SET status='queued', attempts=0, next_try_at=0, note='' "
+                               "WHERE id IN (%s) AND sent_at IS NULL AND status IN "
+                               "('in_db','no_email','not_fit','error')" % marks, ids)
+            n = cur.rowcount
+        elif action == "remove":
+            conn.execute("DELETE FROM messages WHERE site_id IN (%s)" % marks, ids)
+            conn.execute("DELETE FROM events WHERE site_id IN (%s)" % marks, ids)
+            conn.execute("DELETE FROM changes WHERE site_id IN (%s)" % marks, ids)
+            n = conn.execute("DELETE FROM sites WHERE id IN (%s)" % marks, ids).rowcount
+        elif action == "country":
+            n = conn.execute("UPDATE sites SET country=? WHERE id IN (%s)" % marks,
+                             [data.get("value") or ""] + ids).rowcount
+        elif action == "find_direct":
+            n = conn.execute("UPDATE sites SET lookup=1, note='Looking for the site''s own address…' "
+                             "WHERE id IN (%s) AND lookup=0" % marks, ids).rowcount
+        else:
+            return jsonify({"error": "Unknown action"}), 400
+    worker.dirty = True
+    worker.poke()
+    return jsonify({"ok": True, "count": n})
+
+@app.get("/api/export/count")
+def export_count():
+    """How many websites an export would hold, and how many have a price."""
+    camp = _campaign_arg()
+    ids = None
+    if request.args.get("db"):
+        where, args = db_where(request.args)
+        ids = [r["id"] for r in db.query("SELECT id FROM sites WHERE %s" % where, tuple(args))]
+    if request.args.get("ids"):
+        ids = [int(x) for x in request.args["ids"].split(",") if x.strip().isdigit()]
+    all_rows = exporter.rows(camp, None, ids)
+    sample = exporter.client_rows(camp, ids, 0, 0)
+    # Two typical sites and the cheapest one, so the minimum price shows in the example.
+    shown = sample[:2] + ([min(sample[2:], key=lambda r: r["price"])] if len(sample) > 2 else [])
+    return jsonify({"total": len(all_rows), "priced": len(sample),
+                    "sample": [{"domain": r["domain"], "price": r["price"]} for r in shown]})
+
+
 @app.get("/api/export")
 def export():
     camp = _campaign_arg()
     only = request.args.get("only")
     buf_path = os.path.join(db.DATA_DIR, "export.xlsx")
-    exporter.write(buf_path, camp, only)
-    name = "Almo %s %s.xlsx" % ("prices" if only == "prices" else "results",
+    ids = None
+    if request.args.get("db"):
+        where, args = db_where(request.args)
+        ids = [r["id"] for r in db.query("SELECT id FROM sites WHERE %s" % where, tuple(args))]
+    if request.args.get("ids"):
+        ids = [int(x) for x in request.args["ids"].split(",") if x.strip().isdigit()]
+    if request.args.get("client"):
+        def _num(key):
+            try:
+                return float(str(request.args.get(key) or 0).replace(",", "."))
+            except ValueError:
+                return 0.0
+        exporter.write_client(buf_path, camp, ids, _num("markup"), _num("margin"),
+                              bool(request.args.get("special")), _num("minimum"))
+        name = "Uprankd price list %s.xlsx" % datetime.now().strftime("%Y-%m-%d")
+        return send_file(buf_path, as_attachment=True, download_name=name)
+    exporter.write(buf_path, camp, only, ids)
+    name = "Almo %s %s.xlsx" % ("prices" if only == "prices" else "websites" if ids is not None else "results",
                                 datetime.now().strftime("%Y-%m-%d"))
     return send_file(buf_path, as_attachment=True, download_name=name)
 
@@ -437,12 +974,54 @@ def open_window(url):
     webbrowser.open(url)
 
 
+def _running_version(url):
+    import requests
+
+    try:
+        r = requests.get(url + "/api/version", timeout=3)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+def _stop_old(port):
+    """Stop an older Almo that still holds the port (e.g. a Terminal window
+    left open from before an update). Only Python processes running app.py."""
+    try:
+        pids = subprocess.run(["lsof", "-ti", "tcp:%d" % port, "-sTCP:LISTEN"],
+                              capture_output=True, text=True, timeout=5).stdout.split()
+    except Exception:
+        return False
+    stopped = False
+    for pid in pids:
+        try:
+            cmd = subprocess.run(["ps", "-o", "command=", "-p", pid], capture_output=True,
+                                 text=True, timeout=5).stdout
+            if "python" in cmd.lower() and "app.py" in cmd:
+                os.kill(int(pid), 15)
+                stopped = True
+        except Exception:
+            continue
+    for _ in range(20):
+        if _port_free(port):
+            return stopped
+        time.sleep(0.25)
+    return False
+
+
 def main():
     url = "http://127.0.0.1:%d" % PORT
     if not _port_free(PORT):
-        print("Almo is already running - opening it.")
-        open_window(url)
-        return
+        running = _running_version(url)
+        if running.get("folder") == HERE and running.get("build") == build_id():
+            print("Almo is already running - opening it.")
+            open_window(url)
+            return
+        print("An older Almo is still running - restarting it with this version.")
+        if not _stop_old(PORT):
+            print("Couldn't stop it. Close the other Almo Terminal window, then open Almo again.")
+            open_window(url)
+            return
     db.init()
     if not os.environ.get("ALMO_NO_WORKER"):
         worker.start()

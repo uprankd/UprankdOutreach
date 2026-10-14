@@ -304,6 +304,27 @@ def main():
     stats = {p["label"]: p for p in db.pitches(camp)}
     check(sum(p["replies"] for p in stats.values()) >= 1 and all(p["sent"] for p in stats.values()),
           "per-variant stats: sent and replies")
+
+    # A link builder's address in the database: Almo looks for the site's own one
+    SITES["seller-site.lv"] = {"ok": True, "text": "news", "language": "lv", "title": "x",
+                               "emails": ["reklama@seller-site.lv"]}
+    db.add_sites(camp, ["seller-site.lv"])
+    ss = status("seller-site.lv")
+    db.update_site(ss["id"], email="sales@bigseller.com")
+    run(w, 3)
+    ss = status("seller-site.lv")
+    check(ss["email"] == "reklama@seller-site.lv" and "sales@bigseller.com" in ss["emails"],
+          "pitches the site's own address, keeps the link builder's as a backup")
+    hist = db.changes(ss["id"])
+    check(any(h["field"] == "email" and h["actor"] == "Almo" for h in hist), "Almo's change is in the history")
+    SITES["quiet-site.lv"] = {"ok": True, "text": "news", "language": "lv", "title": "x", "emails": ["info@quiet-site.lv"]}
+    db.add_sites(camp, ["quiet-site.lv"])
+    qs = status("quiet-site.lv")
+    db.update_site(qs["id"], status="in_db", email="sales@bigseller.com", lookup=1)
+    run(w, 2)
+    qs = status("quiet-site.lv")
+    check(qs["email"] == "info@quiet-site.lv" and qs["lookup"] == 0 and qs["status"] == "in_db",
+          "'Find own contact' updates the address without pitching")
     print("\nAll checks passed.")
 
 

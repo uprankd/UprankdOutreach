@@ -261,7 +261,7 @@ def _run(filename, raw, dry, campaign_id=None):
                     fill.update(status=status[0], note=status[1])
                 if fill:
                     stats["updated"] += 1
-                    updates.append((current["id"], fill))
+                    updates.append((current["id"], fill, current))
                 else:
                     stats["unchanged"] += 1
         stats["sheets"].append({"name": title, "rows": n})
@@ -281,10 +281,11 @@ def _run(filename, raw, dry, campaign_id=None):
                     now, now] + list(values.values())
             conn.execute("INSERT INTO sites (%s) VALUES (%s)" % (", ".join(cols), ",".join("?" * len(cols))),
                          args)
-        for sid, fill in updates:
+        for sid, fill, current in updates:
             fill["updated_at"] = now
             conn.execute("UPDATE sites SET %s WHERE id=?" % ", ".join("%s=?" % k for k in fill),
                          (*fill.values(), sid))
+            db.record_changes(conn, sid, current, fill, who="Import", ts=now)
     db.log("add", "Imported %d new website%s, updated %d" % (
         stats["new"], "" if stats["new"] == 1 else "s", stats["updated"]))
     return stats

@@ -116,6 +116,29 @@ def main():
     r = c.get("/api/export?ids=%d" % sid)
     head = [x.value for x in load_workbook(io.BytesIO(r.data)).active[1]]
     check("Email" in head and "Marked sponsored" in head, "full export keeps everything")
+
+    # Change history and link builders
+    c.post("/api/sites/%d/action" % sid, json={"action": "save", "fields": {"price": "120"}})
+    hist = c.get("/api/sites/%d" % sid).get_json()
+    ch = [x for x in hist["changes"] if x["field"] == "price"]
+    check(ch and ch[0]["old_value"] == "100" and ch[0]["new_value"] == "120" and ch[0]["actor"] == "You",
+          "editing a price is recorded: old, new and who")
+    acts = c.get("/api/changes?kind=people").get_json()["changes"]
+    check(any(x["domain"] == "sent-one.lv" and x["field"] == "price" for x in acts), "Activity lists the change")
+    db.add_sites(camp, ["agency-a.lv", "agency-b.lv", "agency-c.lv"])
+    for d in ("agency-a.lv", "agency-b.lv", "agency-c.lv"):
+        db.update_site(db.sites("domain=?", (d,))[0]["id"], email="office@linkseller.com")
+    rows = {r["domain"]: r for r in c.get("/api/db?q=agency").get_json()["rows"]}
+    check(rows["agency-a.lv"]["link_builder"] and rows["agency-a.lv"]["shared"] == 3,
+          "a seller's address used for 3 websites is marked as a link builder")
+    only = c.get("/api/db?niches=builder").get_json()["rows"]
+    check({r["domain"] for r in only} >= {"agency-a.lv", "agency-b.lv"} and "sent-one.lv" not in {r["domain"] for r in only},
+          "filter: link builder contacts only")
+    aid = rows["agency-a.lv"]["id"]
+    detail = c.get("/api/sites/%d" % aid).get_json()
+    check(detail["contact"]["link_builder"], "the website panel knows it's a link builder's address")
+    c.post("/api/sites/%d/action" % aid, json={"action": "find_direct"})
+    check(db.get_site(aid)["lookup"] == 1, "'Find the site's own contact' queues a lookup")
     print("\nAll checks passed.")
 
 

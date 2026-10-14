@@ -110,6 +110,11 @@ def _schema(kind):
         """CREATE TABLE IF NOT EXISTS pitches (
             id {ID}, campaign_id INTEGER NOT NULL, label TEXT NOT NULL, subject TEXT NOT NULL,
             body TEXT NOT NULL, active INTEGER DEFAULT 1, created_at {REAL} NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS changes (
+            id {ID}, site_id INTEGER NOT NULL, ts {REAL} NOT NULL, field TEXT NOT NULL,
+            old_value TEXT DEFAULT '', new_value TEXT DEFAULT '', actor TEXT DEFAULT '')""",
+        "CREATE INDEX IF NOT EXISTS changes_site ON changes(site_id)",
+        "CREATE INDEX IF NOT EXISTS changes_ts ON changes(ts)",
     )]
 
 
@@ -231,7 +236,7 @@ MIGRATIONS = {
     "sites": [("country", "TEXT DEFAULT ''"), ("source", "TEXT DEFAULT 'almo'"),
               ("dr", "TEXT DEFAULT ''"), ("traffic", "TEXT DEFAULT ''"),
               ("contacted_before", "INTEGER DEFAULT 0"), ("mailbox_id", "INTEGER"),
-              ("pitch_id", "INTEGER")],
+              ("pitch_id", "INTEGER"), ("lookup", "INTEGER DEFAULT 0")],
 }
 
 
@@ -278,8 +283,56 @@ SITE_FIELDS = {
     "price", "special_price", "casino", "loan", "crypto", "adult", "sponsored_tag",
     "link_insertion", "requirements", "draft", "attempts", "next_try_at",
     "campaign_id", "country", "source", "dr", "traffic", "contacted_before",
-    "mailbox_id", "pitch_id",
+    "mailbox_id", "pitch_id", "lookup",
 }
+
+# --------------------------------------------------------------------------- #
+# Change history: who changed what on a website, and when
+# --------------------------------------------------------------------------- #
+TRACKED = ("email", "price", "special_price", "casino", "loan", "crypto", "adult",
+           "sponsored_tag", "link_insertion", "requirements", "country", "dr", "traffic",
+           "status")
+_who = threading.local()
+
+
+def set_actor(name):
+    """Name recorded with changes made by this thread (a person, Almo, Import)."""
+    _who.name = name
+
+
+def actor():
+    return getattr(_who, "name", "") or "Almo"
+
+
+def _same(a, b):
+    return str("" if a is None else a).strip() == str("" if b is None else b).strip()
+
+
+def record_changes(conn, site_id, before, after, who=None, ts=None):
+    """Store one row per tracked field that really changed."""
+    ts = ts or time.time()
+    for field in TRACKED:
+        if field in after and not _same(before.get(field), after[field]):
+            conn.execute("INSERT INTO changes (site_id, ts, field, old_value, new_value, actor) "
+                         "VALUES (?,?,?,?,?,?)",
+                         (site_id, ts, field, str(before.get(field) or "")[:500],
+                          str(after[field] or "")[:500], who or actor()))
+
+
+def changes(site_id=None, limit=100, since=0, actor_kind=""):
+    where, args = ["c.ts>?"], [since]
+    if site_id:
+        where.append("c.site_id=?")
+        args.append(site_id)
+    if actor_kind == "almo":
+        where.append("c.actor='Almo'")
+    elif actor_kind == "import":
+        where.append("c.actor='Import'")
+    elif actor_kind == "people":
+        where.append("c.actor NOT IN ('Almo','Import')")
+    return query("SELECT c.*, s.domain FROM changes c LEFT JOIN sites s ON s.id=c.site_id "
+                 "WHERE %s ORDER BY c.id DESC LIMIT %d" % (" AND ".join(where), int(limit)),
+                 tuple(args))
 
 
 def update_site(site_id, **fields):
@@ -291,8 +344,15 @@ def update_site(site_id, **fields):
             fields[key] = json.dumps(fields[key])
     fields["updated_at"] = time.time()
     cols = ", ".join("%s=?" % k for k in fields)
+    tracked = [f for f in TRACKED if f in fields]
     with tx() as conn:
+        before = {}
+        if tracked:
+            row = conn.execute("SELECT %s FROM sites WHERE id=?" % ", ".join(tracked), (site_id,)).fetchone()
+            before = dict(row) if row else {}
         conn.execute("UPDATE sites SET %s WHERE id=?" % cols, (*fields.values(), site_id))
+        if before:
+            record_changes(conn, site_id, before, fields)
 
 
 def get_site(site_id):
@@ -339,6 +399,7 @@ def delete_site(site_id):
     with tx() as conn:
         conn.execute("DELETE FROM messages WHERE site_id=?", (site_id,))
         conn.execute("DELETE FROM events WHERE site_id=?", (site_id,))
+        conn.execute("DELETE FROM changes WHERE site_id=?", (site_id,))
         conn.execute("DELETE FROM sites WHERE id=?", (site_id,))
 
 
