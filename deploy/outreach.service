@@ -1,0 +1,23 @@
+[Unit]
+Description=Uprankd Outreach
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=outreach
+Group=outreach
+WorkingDirectory=/home/outreach/webapps/uprankd-outreach
+ExecStart=/home/outreach/webapps/uprankd-outreach/.venv/bin/python server.py
+Environment=TZ=Europe/Riga
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
