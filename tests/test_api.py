@@ -98,7 +98,8 @@ def main():
 
     # Client price list
     check(exporter.client_price("100", 30, 10) == 140 and exporter.client_price("99", 10, 0) == 109
-          and exporter.client_price("Unknown", 30, 0) is None, "client price = cost × markup + margin, rounded up")
+          and exporter.client_price("Unknown", 30, 0) is None and exporter.client_price("20", 30, 10, 200) == 200
+          and exporter.client_price("400", 30, 10, 200) == 530, "client price = cost × markup + margin, rounded up, never below the minimum")
     cnt = c.get("/api/export/count?db=1").get_json()
     check(cnt["total"] == 2 and cnt["priced"] == 1, "export dialog knows how many have a price")
     r = c.get("/api/export?db=1&client=1&markup=30&margin=10&special=1")

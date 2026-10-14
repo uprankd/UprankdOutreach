@@ -42,16 +42,17 @@ def rows(campaign_id=None, only=None, ids=None):
     return out
 
 
-def client_price(price, markup=0.0, margin=0.0):
-    """Our cost + markup % + a fixed margin, rounded up to whole euros.
-    None when the cost isn't a number."""
+def client_price(price, markup=0.0, margin=0.0, minimum=0.0):
+    """Our cost + markup % + a fixed margin, rounded up to whole euros, and
+    never below the minimum client price. None when the cost isn't a number."""
     try:
         cost = float(str(price).replace(",", ".").strip())
     except (TypeError, ValueError):
         return None
     if cost <= 0:
         return None
-    return int(math.ceil(round(cost * (1 + float(markup or 0) / 100.0) + float(margin or 0), 6)))
+    value = int(math.ceil(round(cost * (1 + float(markup or 0) / 100.0) + float(margin or 0), 6)))
+    return max(value, int(math.ceil(float(minimum or 0))))
 
 
 TOPICS = (("casino", "Casino"), ("loan", "Loans"), ("crypto", "Crypto"), ("adult", "Adult"))
@@ -80,22 +81,22 @@ def _positive(value):
     return n if n > 0 else None
 
 
-def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False):
+def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False, minimum=0.0):
     out = []
     for r in rows(campaign_id, "prices", ids):
-        price = client_price(r["price"], markup, margin)
+        price = client_price(r["price"], markup, margin, minimum)
         if price is None:
             continue
         row = {"domain": r["domain"], "price": price, "requirements": r.get("requirements") or ""}
         if special:
             for key, _label in TOPICS:
                 t = topic_price(r, key)
-                row[key] = "No" if t == "No" else (client_price(t, markup, margin) if t else "")
+                row[key] = "No" if t == "No" else (client_price(t, markup, margin, minimum) if t else "")
         out.append(row)
     return out
 
 
-def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False):
+def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False, minimum=0.0):
     """A price list to send to a client: website, client price, requirements.
     No costs, emails or internal notes."""
     from openpyxl import Workbook
@@ -113,7 +114,7 @@ def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, speci
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="060B70")
         cell.alignment = Alignment(vertical="center")
-    for r in client_rows(campaign_id, ids, markup, margin, special):
+    for r in client_rows(campaign_id, ids, markup, margin, special, minimum):
         ws.append([r.get(k, "") for _l, k, _w in cols])
     for i, (_l, _k, width) in enumerate(cols, start=1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = width

@@ -760,8 +760,11 @@ def db_list():
                     tuple(args))["n"]
     countries_ = db.query("SELECT country, COUNT(*) AS n FROM sites WHERE country<>'' "
                           "GROUP BY country ORDER BY n DESC")
+    prices = sorted(v for v in (db._num(r["p"]) for r in db.query(
+        "SELECT price AS p FROM sites WHERE %s AND %s" % (where, STAGES["priced"]), tuple(args))) if v)
+    median = prices[len(prices) // 2] if prices else 0
     return jsonify({"rows": rows, "total": total, "page": page, "per": per,
-                    "summary": {"total": total, "priced": priced["n"],
+                    "summary": {"total": total, "priced": priced["n"], "median": round(median),
                                 "avg": round(priced["avg"] or 0), "lo": priced["lo"],
                                 "hi": priced["hi"], "casino": casino},
                     "countries": countries_, "statuses": STATUS})
@@ -829,8 +832,10 @@ def export_count():
         ids = [int(x) for x in request.args["ids"].split(",") if x.strip().isdigit()]
     all_rows = exporter.rows(camp, None, ids)
     sample = exporter.client_rows(camp, ids, 0, 0)
+    # Two typical sites and the cheapest one, so the minimum price shows in the example.
+    shown = sample[:2] + ([min(sample[2:], key=lambda r: r["price"])] if len(sample) > 2 else [])
     return jsonify({"total": len(all_rows), "priced": len(sample),
-                    "sample": [{"domain": r["domain"], "price": r["price"]} for r in sample[:3]]})
+                    "sample": [{"domain": r["domain"], "price": r["price"]} for r in shown]})
 
 
 @app.get("/api/export")
@@ -851,7 +856,7 @@ def export():
             except ValueError:
                 return 0.0
         exporter.write_client(buf_path, camp, ids, _num("markup"), _num("margin"),
-                              bool(request.args.get("special")))
+                              bool(request.args.get("special")), _num("minimum"))
         name = "Uprankd price list %s.xlsx" % datetime.now().strftime("%Y-%m-%d")
         return send_file(buf_path, as_attachment=True, download_name=name)
     exporter.write(buf_path, camp, only, ids)

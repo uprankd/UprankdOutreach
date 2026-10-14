@@ -509,3 +509,108 @@ td.strong{color:var(--ink);font-weight:650}
 .modal.open{transform:translate(-50%,0)}
 .modal-foot .grow.warn{color:var(--warn)}
 .example .small{margin:0 0 8px}
+
+/* ---------- polish pass 3: fewer boxes, colour with meaning ---------- */
+/* labels read as words; small caps stay only in the sidebar and table headers */
+.label{font-size:var(--t-small);font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-3)}
+.rail .label{font-size:var(--t-label);font-weight:600;letter-spacing:.075em;text-transform:uppercase}
+.fld>.label{color:var(--ink-2)}
+
+/* website letter tiles */
+.mono{--h:210;display:inline-grid;place-items:center;flex:none;width:18px;height:18px;margin-right:9px;border-radius:5px;font-size:10.5px;font-weight:700;line-height:1;background:hsl(var(--h) 60% 50% / .13);color:hsl(var(--h) 55% 36%);vertical-align:-4px}
+:root[data-theme=dark] .mono{background:hsl(var(--h) 55% 60% / .16);color:hsl(var(--h) 70% 74%)}
+.dtitle .mono{width:26px;height:26px;margin-right:12px;font-size:13px;border-radius:7px}
+.drawer-head .dsub a{display:inline-flex;align-items:center;gap:3px}
+.ext{width:11px;height:11px}
+
+/* status: plain text unless it needs you (amber), is done (green) or failed (red) */
+.pill{height:auto;padding:0;background:none;border-radius:0;font-weight:500;color:var(--ink-3)}
+.pill:before{display:none}
+.pill.warn,.pill.good,.pill.bad{height:22px;padding:0 9px;border-radius:11px;font-weight:600}
+.pill.sky{background:none;color:var(--ink-3)}
+
+/* banners: no icons, a coloured edge only when it matters */
+.banner{padding:12px 16px;border-color:var(--rule);background:var(--wash)}
+.banner.bad{border-left:3px solid var(--bad)}
+.banner.warn{border-left:3px solid var(--warn)}
+.banner b{color:var(--ink)}
+
+/* overview numbers: one open strip, no cards */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.stat{padding:20px 24px 22px;border-left:1px solid var(--rule);min-width:0}
+.stat:first-child{border-left:0;padding-left:0}
+.stat .fig{margin-top:10px}
+.funnel-step .label{margin:0}
+.funnel-loss{display:block;color:var(--ink-3)}
+.feed-item[data-site]{cursor:pointer}
+.feed-item[data-site]:hover .what b{text-decoration:underline;text-underline-offset:3px}
+.feed-item .what .muted{font-size:var(--t-small)}
+.step .tick svg{width:12px;height:12px}
+
+/* database topics */
+.tcs{display:inline-flex;gap:6px;flex-wrap:nowrap}
+.tc{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:11px;background:color-mix(in srgb,var(--good) 10%,transparent);color:var(--ink-2);font-size:12px;white-space:nowrap}
+.tc b{color:var(--good);font-weight:650}
+.chip.is-on:before{content:none}
+
+/* settings: title on the left, controls on the right, divided by a line */
+.settings{max-width:1080px}
+.sset{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px 48px;padding:28px 0;border-top:1px solid var(--rule)}
+.sset:first-child{border-top:0;padding-top:4px}
+.sset-head p{margin:6px 0 0;font-size:var(--t-small);color:var(--ink-3);line-height:1.5}
+.sset-body{min-width:0}
+.sset .switch:first-child{padding-top:0}
+@media (max-width:1100px){.sset{grid-template-columns:1fr;gap:14px}}
+.mode-note{margin:10px 0 0}
+.seg .dot{margin-right:7px;display:inline-block;vertical-align:1px}
+.seg .dot.on{animation:none;box-shadow:none}
+
+/* mailbox rows: click to edit, switch to pause, the rest under ⋯ */
+.box{gap:14px;padding:12px 10px;margin:0 -10px;border-bottom:1px solid var(--rule);border-radius:0;cursor:pointer;flex-wrap:nowrap;transition:background .12s}
+.box:first-child{padding-top:12px}
+.box:hover{background:var(--wash)}
+.box .grow span{color:var(--ink-3)}
+.box .grow .bad{color:var(--bad)}
+.box .result:empty{display:none}
+.box .today{min-width:64px;justify-content:flex-end}
+.warn-t{color:var(--warn)}
+.sw{position:relative;flex:none;width:34px;height:20px;padding:0;border:0;border-radius:10px;background:var(--rule-2);cursor:pointer;transition:background .16s}
+.sw:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .18s var(--out)}
+.sw.on{background:var(--good)}
+.sw.on:after{transform:translateX(14px)}
+.more{position:relative;flex:none}
+.more .pop{display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:170px;padding:4px;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r);box-shadow:var(--shadow)}
+.more.open .pop{display:block}
+.more .pop button{display:block;width:100%;padding:8px 10px;border:0;border-radius:4px;background:none;color:var(--ink-2);font:inherit;font-size:var(--t-body);text-align:left;cursor:pointer}
+.more .pop button:hover{background:var(--wash-2);color:var(--ink)}
+.more .pop .danger{color:var(--bad)}
+.boxform{margin:14px 0 0}
+
+/* pitch: the editor is not a card; the A/B table sits on the page */
+.editor{padding:0}
+.abcard{margin-bottom:34px}
+
+/* campaign letter tiles only when the rail is collapsed */
+.menu>button .client-mark,.menu-list .client-mark{display:none}
+:root[data-rail=collapsed] .menu>button .client-mark{display:grid}
+
+/* a destructive action that stays quiet until hovered */
+.ctl--quiet-danger{color:var(--ink-3)}
+.ctl--quiet-danger:hover:not([disabled]){color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--rule-2));background:color-mix(in srgb,var(--bad) 8%,var(--paper))}
+
+/* export dialog */
+.form-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.affix{display:flex;align-items:center;border:1px solid var(--rule-2);border-radius:var(--r);background:var(--paper);overflow:hidden}
+.affix:focus-within{border-color:color-mix(in srgb,var(--sky) 60%,var(--rule-2));box-shadow:0 0 0 3px var(--sky-tint)}
+.affix input{border:0!important;box-shadow:none!important;min-width:0}
+.affix span{padding:0 11px;color:var(--ink-3);font-size:var(--t-body)}
+.affix input+span{padding-left:0}
+.minflag{display:inline-block;margin-right:6px;padding:1px 6px;border-radius:4px;background:var(--wash);color:var(--ink-3);font-size:10.5px;font-weight:600;vertical-align:1px}
+.facts{grid-template-columns:repeat(5,minmax(0,1fr))}
+.fact:nth-child(5n){border-right:0}
+.affix span+input{padding-left:0}
+.sset{margin:0}
+.sw.on{background:var(--sky)}
+.box .dot{margin-right:-4px}
+.stats .fig{font-size:32px}
+#dbChips{align-items:center}

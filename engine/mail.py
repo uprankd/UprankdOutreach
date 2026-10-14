@@ -66,30 +66,37 @@ def logo_data_uri():
 
 
 def signature_html(cfg, logo_src=None):
-    lines = [x for x in (cfg.get("sender_name"), cfg.get("sender_title"),
-                         cfg.get("company")) if x]
-    sig = "<br><br>".join(html.escape(x) for x in lines)
+    """A plain, compact signature: logo, name, title · company, website · address.
+    Tables and inline styles only, so Gmail and Outlook show it the same."""
+    name = html.escape(cfg.get("sender_name") or "")
+    role = " · ".join(html.escape(x) for x in (cfg.get("sender_title"), cfg.get("company")) if x)
     logo = cfg.get("logo_url") or ""
     if _embed_logo(cfg):
         src = logo_src or ("cid:" + LOGO_CID)
-        img = ('<img src="%s" width="140" height="24" alt="Uprankd" style="display:block;'
-               'margin-bottom:15px;border:0;width:140px;height:24px;">' % html.escape(src, quote=True))
+        img = ('<img src="%s" width="112" height="19" alt="Uprankd" style="display:block;border:0;'
+               'width:112px;height:19px;">' % html.escape(src, quote=True))
     else:
-        img = ('<img src="%s" width="45" alt="" style="display:block;margin-bottom:15px;'
-               'border-radius:8px;">' % html.escape(logo, quote=True)) if logo else ""
-    return (
-        '<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,'
-        'sans-serif;font-size:13px;color:#000000;"><tr>'
-        '<td style="vertical-align:top;padding-right:20px;">%s%s</td>'
-        '<td width="25" style="background-color:#121887;"></td><td width="20"></td>'
-        '<td style="vertical-align:middle;">www.uprankd.com<br><br>'
-        'Br&#299;v&#299;bas iela 40-20B, R&#299;ga, LV-1050</td></tr></table>' % (img, sig))
+        img = ('<img src="%s" height="28" alt="" style="display:block;border:0;height:28px;">'
+               % html.escape(logo, quote=True)) if logo else ""
+    rows = []
+    if img:
+        rows.append('<tr><td style="padding:0 0 12px;">%s</td></tr>' % img)
+    if name:
+        rows.append('<tr><td style="font-size:14px;font-weight:bold;color:#0b0f3a;'
+                    'padding:0 0 2px;">%s</td></tr>' % name)
+    if role:
+        rows.append('<tr><td style="font-size:13px;color:#555b6e;padding:0 0 10px;">%s</td></tr>' % role)
+    rows.append('<tr><td style="font-size:12px;color:#7a8091;border-top:1px solid #e3e5eb;padding:10px 0 0;">'
+                '<a href="https://uprankd.com" style="color:#008dc6;text-decoration:none;">uprankd.com</a>'
+                ' &nbsp;·&nbsp; Br&#299;v&#299;bas iela 40-20B, R&#299;ga, LV-1050</td></tr>')
+    return ('<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,Helvetica,'
+            'sans-serif;border-collapse:collapse;">%s</table>' % "".join(rows))
 
 
 def signature_text(cfg):
     lines = [x for x in (cfg.get("sender_name"), cfg.get("sender_title"),
                          cfg.get("company")) if x]
-    return "\n".join(lines + ["www.uprankd.com"])
+    return "\n".join(lines + ["uprankd.com · Brīvības iela 40-20B, Rīga, LV-1050"])
 
 
 def build_message(cfg, to_addr, subject, body, in_reply_to="", references="",
