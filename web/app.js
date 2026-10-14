@@ -85,7 +85,7 @@ const NAV1 = [["overview", "Overview", "overview"], ["websites", "Outreach", "ou
 const NAV2 = [["pitch", "Pitch email", "pitch"], ["settings", "Settings", "settings"]];
 function renderNav() {
   const att = S.data ? S.data.attention : 0;
-  const item = ([key, label, ic]) => '<a href="#/' + key + '"' + (S.route === key ? ' aria-current="page"' : "") + ">" + icon(ic, "nav-icon") + '<span class="nav-label">' + label + "</span>" + (key === "attention" && att ? '<span class="count">' + att + "</span>" : "") + "</a>";
+  const item = ([key, label, ic]) => '<a href="#/' + key + '" title="' + label + '"' + (S.route === key ? ' aria-current="page"' : "") + ">" + icon(ic, "nav-icon") + '<span class="nav-label">' + label + "</span>" + (key === "attention" && att ? '<span class="count">' + att + "</span>" : "") + "</a>";
   $("#nav0").innerHTML = NAV0.map(item).join("");
   $("#nav1").innerHTML = NAV1.map(item).join("");
   $("#nav2").innerHTML = NAV2.map(item).join("");
@@ -98,12 +98,13 @@ function renderCampaigns() {
   $("#campName").textContent = cur ? cur.name : "All campaigns";
   $("#campMark").textContent = (cur ? cur.name : "A").slice(0, 1).toUpperCase();
   const total = camps.reduce((a, c) => a + c.n, 0);
-  $("#campList").innerHTML = '<button data-c="0"' + (!S.campaign ? ' aria-current="true"' : "") + '><span class="client-mark">A</span><span class="cname">All campaigns</span><span class="n">' + total + "</span></button>" +
-    camps.map((c) => '<button data-c="' + c.id + '"' + (S.campaign === c.id ? ' aria-current="true"' : "") + '><span class="client-mark">' + esc(c.name.slice(0, 1).toUpperCase()) + '</span><span class="cname">' + esc(c.name) + '</span><span class="n">' + c.n + "</span></button>").join("");
+  $("#campList").innerHTML = '<button data-c="0"' + (!S.campaign ? ' aria-current="true"' : "") + '><span class="client-mark">A</span><span class="cname">All campaigns</span><span class="n">' + fmt(total) + "</span></button>" +
+    camps.map((c) => '<button data-c="' + c.id + '"' + (S.campaign === c.id ? ' aria-current="true"' : "") + '><span class="client-mark">' + esc(c.name.slice(0, 1).toUpperCase()) + '</span><span class="cname">' + esc(c.name) + '</span><span class="n">' + fmt(c.n) + "</span></button>").join("");
   $("#addCamp").innerHTML = camps.map((c) => '<option value="' + c.id + '"' + ((S.campaign || camps[0].id) === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>").join("");
   const st = d.settings;
   const u = d.user;
-  const nm = u ? u.name : st.sender_name || "Set your name";
+  const box = (st.mailboxes || []).find((b) => b.sender_name);
+  const nm = u ? u.name : (box && box.sender_name) || "Uprankd";
   $("#whoName").textContent = nm;
   $("#whoSub").textContent = u ? u.email : "Almo · on this computer";
   const initials = (nm || "U").split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
@@ -141,8 +142,8 @@ async function refresh() {
 
 /* ------------------------------------------------------------------ overview */
 function deltaHTML(m) {
-  if (!m.prev && !m.value) return '<div class="delta">no activity yet</div>';
-  if (!m.prev) return '<div class="delta"><b class="good">new</b>&nbsp;vs. prev ' + S.days + "d</div>";
+  if (!m.prev && !m.value) return '<div class="delta">nothing yet</div>';
+  if (!m.prev) return '<div class="delta">no earlier data</div>';
   const ch = ((m.value - m.prev) / m.prev) * 100;
   const up = ch >= 0;
   return '<div class="delta"><span class="' + (up ? "good" : "bad") + '">' + icon(up ? "up" : "down") + "</span><b class=\"" + (up ? "good" : "bad") + '">' + Math.abs(ch).toFixed(1) + "%</b>&nbsp;vs. prev " + S.days + "d</div>";
@@ -183,10 +184,10 @@ function renderOverview() {
   const rows = order.filter((k) => d.by_status[k]).map((k) => [k, d.by_status[k]]);
   const tot = rows.reduce((a, r) => a + r[1], 0) || 1, max = Math.max(1, ...rows.map((r) => r[1]));
   const statusHTML = rows.length ? '<div class="rhd"><span class="label t">Status</span><span class="label v">Sites</span><span class="label p">Share</span></div>' +
-    rows.map(([k, n]) => '<div class="row" data-go="#/websites?f=' + k + '"><div class="t"><span class="bar" style="width:' + (100 * n / max).toFixed(1) + '%"></span><em>' + esc(d.statuses[k]) + '</em></div><span class="v">' + fmt(n) + '</span><span class="p">' + (100 * n / tot).toFixed(1) + "%</span></div>").join("")
+    rows.map(([k, n]) => '<div class="row" data-go="#/websites?f=' + k + '"><div class="t"><em>' + esc(d.statuses[k]) + '</em><span class="track"><span class="bar" style="width:' + (100 * n / max).toFixed(1) + '%"></span></span></div><span class="v">' + fmt(n) + '</span><span class="p">' + (100 * n / tot).toFixed(1) + "%</span></div>").join("")
     : '<div class="empty"><strong>No websites yet</strong><button class="ctl ctl--primary" data-go="add">Add websites</button></div>';
   const feed = d.events.length ? '<div class="feed">' + d.events.slice(0, 12).map((e) => '<div class="feed-item"><span class="k k-' + e.kind + '"></span><span class="what">' + (e.domain ? '<b data-site="' + e.site_id + '">' + esc(e.domain) + "</b> · " : "") + esc(e.text) + '</span><span class="when">' + ago(e.ts) + "</span></div>").join("") + "</div>" : '<div class="empty"><p>No activity yet.</p></div>';
-  html += '<section class="cols"><div><div class="head"><div><h2 class="sec">Status</h2><div class="pagesub">' + fmt(tot) + ' websites</div></div><a class="small" href="#/websites">All websites</a></div>' + statusHTML + '</div><div><div class="head"><div><h2 class="sec">Activity</h2></div><button class="ctl ctl--tiny" data-act="inbox">' + icon("inbox") + 'Check inbox</button></div>' + feed + "</div></section>";
+  html += '<section class="cols"><div><div class="head"><div><h2 class="sec">Status</h2><div class="pagesub">' + fmt(tot) + ' websites in outreach</div></div><a class="ctl ctl--tiny" href="#/websites">Open Outreach</a></div>' + statusHTML + '</div><div><div class="head"><div><h2 class="sec">Activity</h2><div class="pagesub">Latest ' + Math.min(12, d.events.length) + ' events</div></div><button class="ctl ctl--tiny" data-act="inbox">' + icon("inbox") + 'Check inbox</button></div>' + feed + "</div></section>";
   v.innerHTML = html;
   drawChart($("#plot"), d.series);
 }
@@ -230,36 +231,28 @@ function drawChart(el, series) {
 const TABS = [["all", "All"], ["progress", "In progress"], ["waiting", "Waiting"], ["attention", "Needs you"], ["done", "Prices collected"], ["closed", "Closed"]];
 function sitesShell() {
   const v = $("#view");
-  if (S.route === "prices") {
-    v.innerHTML = '<section><div class="toolbar"><input class="search" id="q" placeholder="Search websites" value="' + esc(S.q) + '"><span class="grow" style="flex:1"></span><a class="ctl" href="/api/export?only=prices&' + campQ() + '">' + icon("ext") + 'Download prices</a></div><div class="tablewrap" id="tbl"></div></section>';
-  } else {
+  {
     const only = S.route === "attention";
     v.innerHTML = '<section>' + (only ? '' : "") +
-      '<div class="toolbar">' + (only ? "" : '<div class="filter-tabs" id="tabs"></div>') + '<span style="flex:1"></span><input class="search" id="q" placeholder="Search website or email" value="' + esc(S.q) + '">' +
-      (only ? "" : '<button class="ctl" data-act="retry_failed" title="Check again every site that failed or had no email">Retry failed</button>') + '</div><div class="tablewrap" id="tbl"></div></section>';
+      '<div class="toolbar"><input class="search" id="q" placeholder="Search website or email" value="' + esc(S.q) + '">' + (only ? "" : '<div class="filter-tabs" id="tabs"></div><span style="flex:1"></span><button class="ctl" id="retryBtn" data-act="retry_failed" title="Look again for an email on every site that failed or had none" hidden>Retry failed</button>') + '</div><div class="tablewrap" id="tbl"></div></section>';
   }
   $("#q").oninput = (e) => { S.q = e.target.value; clearTimeout(sitesShell._t); sitesShell._t = setTimeout(loadSites, 200); };
 }
 async function loadSites() {
   if (!$("#tbl")) return;
-  const filter = S.route === "attention" ? "attention" : S.route === "prices" ? "prices" : S.filter;
+  const filter = S.route === "attention" ? "attention" : S.filter;
   let d;
   try { d = await api("/api/sites?filter=" + filter + "&q=" + encodeURIComponent(S.q) + "&" + campQ()); } catch (e) { return; }
+  if ($("#retryBtn")) $("#retryBtn").hidden = S.filter !== "closed";
   if ($("#tabs")) $("#tabs").innerHTML = TABS.map(([k, l]) => '<button data-f="' + k + '" class="' + (S.filter === k ? "is-on" : "") + '">' + l + ' <span class="n">' + fmt(d.counts[k]) + "</span></button>").join("");
   const rows = d.rows;
-  const yn = (v) => { const s = String(v || ""); const l = s.toLowerCase(); return l === "yes" ? '<span class="yes">Yes</span>' : l === "no" ? '<span class="no">No</span>' : !s || l === "unknown" ? '<span class="unk">–</span>' : esc(s); };
-  const eur = (v) => (v && !/unknown/i.test(v) ? "€" + esc(v) : '<span class="unk">–</span>');
   let html;
   if (!rows.length) {
-    html = S.route === "attention" ? '<div class="empty"><strong>Nothing needs you</strong></div>'
-      : S.route === "prices" ? '<div class="empty"><strong>No prices yet</strong><p>Prices appear here as replies come in.</p></div>'
+    html = S.route === "attention" ? '<div class="empty"><strong>Nothing needs you</strong><p>Replies Almo couldn\'t handle on its own show up here.</p></div>'
       : '<div class="empty"><strong>' + (S.q || S.filter !== "all" ? "Nothing matches" : "No websites yet") + '</strong><button class="ctl ctl--primary" data-go="add">Add websites</button></div>';
-  } else if (S.route === "prices") {
-    html = '<table><thead><tr><th class="l">Website</th><th>Price</th><th>Special topics</th><th>Casino</th><th>Loan</th><th>Crypto</th><th>Adult</th><th>Marked sponsored</th><th>Link insertion</th><th class="l">Notes</th></tr></thead><tbody>' +
-      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site">' + esc(r.domain) + "</td><td>" + eur(r.price) + "</td><td>" + eur(r.special_price) + "</td><td>" + yn(r.casino) + "</td><td>" + yn(r.loan) + "</td><td>" + yn(r.crypto) + "</td><td>" + yn(r.adult) + "</td><td>" + yn(r.sponsored_tag) + "</td><td>" + (/^\d/.test(r.link_insertion) ? "€" + esc(r.link_insertion) : yn(r.link_insertion)) + '</td><td class="l wrap">' + esc(r.requirements) + "</td></tr>").join("") + "</tbody></table>";
   } else {
-    html = '<table><thead><tr><th class="l">Website</th><th class="l">Email</th><th class="l">Status</th><th class="l">Details</th><th>Price</th><th>Contacted</th><th>Updated</th></tr></thead><tbody>' +
-      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site">' + fav(r.domain) + esc(r.domain) + '</td><td class="l muted">' + (esc(r.email) || '<span class="unk">–</span>') + '</td><td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + esc(r.note || (r.status === "not_fit" ? r.fit_reason : "")) + "</td><td>" + eur(r.price) + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
+    html = '<table class="dbt ot"><thead><tr><th class="l">Website</th><th class="l">Email</th><th class="l">Status</th><th class="l">Details</th><th>Price</th><th>Contacted</th><th>Updated</th></tr></thead><tbody>' +
+      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + esc(r.note || (r.status === "not_fit" ? r.fit_reason : "")) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
   }
   $("#tbl").innerHTML = html;
 }
@@ -267,16 +260,37 @@ async function loadSites() {
 /* ------------------------------------------------------------------ database */
 const fav = (d) => '<img class="fav" alt="" loading="lazy" src="https://icons.duckduckgo.com/ip3/' + encodeURIComponent(d) + '.ico" onerror="this.classList.add(\'gone\')">';
 const yn = (v) => { const s = String(v || ""), l = s.toLowerCase(); return l === "yes" ? '<span class="yn y">Yes</span>' : l === "no" ? '<span class="yn n">No</span>' : !s || l === "unknown" ? '<span class="unk">–</span>' : '<span class="yn">' + esc(s) + "</span>"; };
-const eur = (v) => (v && /^\d/.test(v) ? "€" + esc(v) : '<span class="unk">–</span>');
-const linkIns = (v) => (/^\d/.test(v || "") ? "€" + esc(v) : yn(v));
+const eur = (v) => (numv(v) ? "€" + fmt(numv(v)) : '<span class="unk">–</span>');
+const linkIns = (v) => (numv(v) ? '<span class="tp ok">€' + fmt(numv(v)) + "</span>" : /^yes$/i.test(v || "") ? '<span class="tp ok">Yes</span>' : /^no$/i.test(v || "") ? '<span class="tp no">No</span>' : v ? '<span class="tp" title="' + esc(v) + '">' + esc(String(v).slice(0, 10)) + "</span>" : '<span class="unk">–</span>');
 const DB_DEFAULT = { q: "", country: "", stage: "", niches: [], price_min: "", price_max: "", sort: "domain", dir: "asc", page: 0 };
 const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
 const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"]];
-const COLS = [["domain", "Website", "l"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], ["special", "Special"], [null, "Casino"], [null, "Loan"], [null, "Crypto"], [null, "Adult"], ["sponsored", "Sponsored tag"], ["link", "Link ins."], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
-const emailCell = (e) => e ? '<td class="l email"><span class="addr" title="' + esc(e) + '">' + esc(e) + '</span><button class="copy" data-copy="' + esc(e) + '" title="Copy email" aria-label="Copy ' + esc(e) + '">' + icon("copy") + "</button></td>" : '<td class="l"><span class="unk">–</span></td>';
-const tagCell = (v) => { const l = String(v || "").toLowerCase(); return l === "yes" ? '<span class="yn y" title="Articles are marked as sponsored">Marked</span>' : l === "no" ? '<span class="yn n" title="Articles are not marked as sponsored">Not marked</span>' : yn(v); };
+const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Price"], ["casino", "Casino", "", "Price for a casino article - its own price, the special-topics price, or the normal price when they just said yes"], ["loan", "Loans"], ["crypto", "Crypto"], ["adult", "Adult"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
+const numv = (v) => { const n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) && n > 0 && /^\s*\d/.test(String(v)) ? n : null; };
+/* What a topic costs: its own price, else the special-topics price, else the normal price when they just said yes. */
+function topicPrice(r, k) {
+  const v = String(r[k] || "").trim(), l = v.toLowerCase();
+  if (l === "no") return { no: true };
+  const own = numv(v); if (own) return { p: own, own: true };
+  if (l === "yes") { const sp = numv(r.special_price), p = numv(r.price); return sp ? { p: sp } : p ? { p, base: true } : { yes: true }; }
+  return v ? { text: v } : {};
+}
+function topicCell(r, k) {
+  const t = topicPrice(r, k), base = numv(r.price);
+  if (t.no) return '<span class="tp no">No</span>';
+  if (t.p) {
+    const x = base && Math.abs(t.p - base) > 0.5 ? (t.p / base) : null;
+    return '<span class="tp ok' + (t.base ? " same" : "") + '" title="' + (t.own ? "Own price for this topic" : t.base ? "Same as the normal price" : "Special-topics price") + (x ? " · ×" + x.toFixed(1) + " the normal price" : "") + '">€' + fmt(t.p) + "</span>";
+  }
+  if (t.yes) return '<span class="tp ok">Yes</span>';
+  if (t.text) return '<span class="tp" title="' + esc(t.text) + '">' + esc(t.text.slice(0, 10)) + "</span>";
+  return '<span class="unk">–</span>';
+}
+const emailCell = (e) => e ? '<td class="l email"><span class="addr" title="' + esc(e) + '">' + esc(e) + '</span><button class="copy" data-copy="' + esc(e) + '" title="Copy email" aria-label="Copy ' + esc(e) + '">' + icon("copy") + "</button></td>" : '<td class="l email"><span class="unk">–</span></td>';
+const tagCell = (v) => { const l = String(v || "").toLowerCase(); return l === "yes" ? '<span class="tag-s m" title="Articles are marked as sponsored">Marked</span>' : l === "no" ? '<span class="tag-s u" title="Articles are not marked as sponsored">Not marked</span>' : v ? '<span class="tag-s" title="' + esc(v) + '">' + esc(String(v).slice(0, 14)) + "</span>" : '<span class="unk">–</span>'; };
+const numCell = (v) => { const n = parseFloat(String(v || "").replace(/,/g, "")); return isFinite(n) && String(v).trim() !== "" ? fmt(Math.round(n * 10) / 10) : '<span class="unk">–</span>'; };
 function dbQuery(extra) {
   const p = new URLSearchParams();
   ["q", "country", "stage", "price_min", "price_max", "sort", "dir", "page"].forEach((k) => { if (DBF[k] !== "" && DBF[k] != null) p.set(k, DBF[k]); });
@@ -291,14 +305,12 @@ function dbShell() {
   $("#view").innerHTML =
     '<section style="margin-bottom:34px"><div class="metrics" id="dbMetrics"></div></section>' +
     '<section><div class="toolbar"><input class="search" id="dbq" placeholder="Search" value="' + esc(DBF.q) + '">' +
-    '<select class="ctl" id="dbCountry"></select><div class="filter-tabs" id="dbStage"></div><span style="flex:1"></span>' +
-    '<label class="ctl" title="Import an Excel or CSV file">' + icon("upload") + 'Import<input type="file" id="dbFile" accept=".xlsx,.xlsm,.csv,.txt" hidden></label>' +
-    '<a class="ctl" id="dbExport">' + icon("download") + "Export</a></div>" +
+    '<select class="ctl" id="dbCountry"></select><div class="filter-tabs" id="dbStage"></div></div>' +
     '<div class="toolbar chips" id="dbChips"></div><div class="tablewrap" id="dbTbl"></div><div class="pager" id="dbPager"></div></section>' +
     '<div class="bulkbar" id="bulk"></div>';
   $("#dbq").oninput = (e) => { DBF.q = e.target.value; DBF.page = 0; clearTimeout(dbShell._t); dbShell._t = setTimeout(() => { saveDBF(); loadDB(); }, 220); };
+  $("#dbTbl").onscroll = edgeHints;
   $("#dbCountry").onchange = (e) => { DBF.country = e.target.value; DBF.page = 0; saveDBF(); loadDB(); };
-  $("#dbFile").onchange = (e) => { if (e.target.files[0]) importDB(e.target.files[0]); e.target.value = ""; };
   renderChips();
 }
 function renderChips() {
@@ -315,26 +327,37 @@ async function loadDB() {
   DB.rows = d.rows; DB.total = d.total; S.dbLoaded = Date.now();
   const sm = d.summary;
   $("#dbMetrics").innerHTML = [["Websites", fmt(sm.total), "matching the filters"], ["With prices", fmt(sm.priced), sm.total ? Math.round((100 * sm.priced) / sm.total) + "% of these" : "–"],
-    ["Average price", sm.priced ? "€" + fmt(sm.avg) : "–", sm.priced ? "€" + fmt(sm.lo) + " – €" + fmt(sm.hi) : "no prices yet"], ["Accept casino", fmt(sm.casino), "confirmed yes"]]
+    ["Average price", sm.priced ? "€" + fmt(sm.avg) : "–", sm.priced ? "€" + fmt(sm.lo) + " – €" + fmt(sm.hi) : "no prices yet"], ["Accept casino", fmt(sm.casino), "said yes or quoted a price"]]
     .map(([l, v, c]) => '<div class="metric"><div class="label">' + l + '</div><div class="fig">' + v + '</div><div class="metric-context">' + c + "</div></div>").join("");
   const cs = d.countries;
   $("#dbCountry").innerHTML = '<option value="">All countries</option>' + cs.map((c) => '<option value="' + esc(c.country) + '"' + (DBF.country === c.country ? " selected" : "") + ">" + esc(c.country) + " (" + c.n + ")</option>").join("");
   $("#dbStage").innerHTML = STAGE_TABS.map(([k, l]) => '<button data-stage="' + k + '" class="' + (DBF.stage === k ? "is-on" : "") + '">' + l + "</button>").join("");
-  $("#dbExport").onclick = (e) => { e.preventDefault(); openExport("db=1&" + dbQuery(), DB.total === sm.total ? fmt(sm.total) + " websites matching the filters" : ""); };
+  DB.exportWhat = fmt(sm.total) + " website" + (sm.total === 1 ? "" : "s") + " matching the filters";
   if (!d.rows.length) {
     $("#dbTbl").innerHTML = d.total || DBF.q || DBF.country || DBF.stage || DBF.niches.length || DBF.price_min || DBF.price_max
       ? '<div class="empty"><strong>Nothing matches</strong><p>Try fewer filters.</p><button class="ctl" data-dbclear>Clear filters</button></div>'
       : '<div class="empty"><strong>Your website database is empty</strong><p>Import the Excel file you use today - every sheet is read, and the columns are found by their names. Websites Almo contacts are added here automatically.</p><label class="ctl ctl--primary" style="margin-top:10px">' + icon("upload") + 'Import Excel or CSV<input type="file" accept=".xlsx,.xlsm,.csv,.txt" hidden onchange="window.__importDB(this)"></label></div>';
     $("#dbPager").innerHTML = ""; renderBulk(); return;
   }
-  const th = ([key, label, cls]) => key ? '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '"' + (DBF.sort === key ? ' aria-sort="' + (DBF.dir === "asc" ? "ascending" : "descending") + '"' : "") + ">" + label + '<span class="arr">' + (DBF.sort === key ? (DBF.dir === "asc" ? "↑" : "↓") : "") + "</span></th>" : '<th class="' + (cls || "") + '">' + label + "</th>";
+  const SORTABLE = ["domain", "country", "email", "price", "sponsored", "link", "dr", "traffic", "status"];
+  const th = ([key, label, cls, tip]) => SORTABLE.includes(key) ? '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + (DBF.sort === key ? ' aria-sort="' + (DBF.dir === "asc" ? "ascending" : "descending") + '"' : "") + ">" + label + '<span class="arr">' + (DBF.sort === key ? (DBF.dir === "asc" ? "↑" : "↓") : "") + "</span></th>" : '<th class="' + (cls || "") + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + ">" + label + "</th>";
   const allOn = DB.rows.every((r) => DB.sel.has(r.id));
-  $("#dbTbl").innerHTML = '<table class="dbt"><thead><tr><th class="cb"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
-    d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td><td class="site l">' + fav(r.domain) + esc(r.domain) + '</td><td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email) + "<td class=\"num\">" + eur(r.price) + '</td><td class="num">' + eur(r.special_price) + "</td><td>" + yn(r.casino) + "</td><td>" + yn(r.loan) + "</td><td>" + yn(r.crypto) + "</td><td>" + yn(r.adult) + "</td><td>" + tagCell(r.sponsored_tag) + "</td><td>" + linkIns(r.link_insertion) + '</td><td class="muted">' + (esc(r.dr) || '<span class="unk">–</span>') + '</td><td class="muted">' + (esc(r.traffic) || '<span class="unk">–</span>') + '</td><td class="l">' + pill(r.status, d.statuses) + "</td></tr>").join("") + "</tbody></table>";
+  $("#dbTbl").innerHTML = '<table class="dbt"><thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
+    d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
+      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span></span></td>" +
+      '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email) +
+      '<td class="num strong">' + eur(r.price) + "</td>" + ["casino", "loan", "crypto", "adult"].map((k) => "<td>" + topicCell(r, k) + "</td>").join("") +
+      "<td>" + tagCell(r.sponsored_tag) + "</td><td>" + linkIns(r.link_insertion) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
   $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
-  renderBulk();
+  renderBulk(); edgeHints();
 }
+function edgeHints() {
+  const w = $("#dbTbl"); if (!w) return;
+  w.classList.toggle("scrolled", w.scrollLeft > 4);
+  w.classList.toggle("more", w.scrollLeft + w.clientWidth < w.scrollWidth - 4);
+}
+window.addEventListener("resize", edgeHints);
 function renderBulk() {
   const b = $("#bulk"); if (!b) return;
   const n = DB.all ? DB.total : DB.sel.size;
@@ -389,22 +412,27 @@ async function openSite(id, quiet) {
   else if (s.status === "not_fit") primary = '<button class="ctl ctl--primary" data-sa="send_now">Pitch anyway</button>';
   else if (s.replied_at && !["complete", "declined"].includes(s.status) && !s.draft) primary = '<button class="ctl ctl--primary" data-sa="complete">Mark as done</button><button class="ctl" data-sa="reread">Read reply again</button>';
   const fact = (label, v, cls) => '<div class="fact"><div class="label">' + label + '</div><div class="fv ' + (cls || "") + '">' + v + "</div></div>";
-  const facts = '<div class="facts">' + fact("Price", has(s.price) ? "€" + esc(s.price) : '<span class="unk">–</span>') + fact("Special", has(s.special_price) ? "€" + esc(s.special_price) : '<span class="unk">–</span>') +
-    fact("Link ins.", /^\d/.test(s.link_insertion || "") ? "€" + esc(s.link_insertion) : has(s.link_insertion) ? esc(s.link_insertion) : '<span class="unk">–</span>') + fact("DR", esc(s.dr) || '<span class="unk">–</span>') + fact("Traffic", esc(s.traffic) || '<span class="unk">–</span>') + "</div>";
-  const topics = '<div class="topics">' + [["Casino", "casino"], ["Loans", "loan"], ["Crypto", "crypto"], ["Adult", "adult"], ["Marked sponsored", "sponsored_tag"]]
-    .map(([l, k]) => '<span class="topic ' + (/^yes$/i.test(s[k]) ? "y" : /^no$/i.test(s[k]) ? "n" : "u") + '"><i></i>' + l + "</span>").join("") + "</div>";
-  const inp = (label, key, wide) => '<div class="fld' + (wide ? " full" : "") + '"><span class="label">' + label + '</span><input data-f="' + key + '" value="' + esc(has(s[key]) ? s[key] : "") + '" placeholder="–"></div>';
-  const editForm = '<div class="form-grid compact">' + inp("Price €", "price") + inp("Special topics €", "special_price") + inp("Link insertion", "link_insertion") + inp("Marked sponsored", "sponsored_tag") + inp("Casino", "casino") + inp("Loans", "loan") + inp("Crypto", "crypto") + inp("Adult", "adult") + inp("Country", "country") + inp("DR", "dr") + inp("Traffic", "traffic") +
+  const TERMS = ["price", "special_price", "link_insertion", "casino", "loan", "crypto", "adult", "sponsored_tag", "dr", "traffic"];
+  const anyTerms = TERMS.some((k) => has(s[k]));
+  const facts = !anyTerms ? '<p class="small notes-empty">No terms yet - they fill in when the website replies, or add them with Edit.</p>'
+    : '<div class="facts">' + fact("Price", eur(s.price)) + fact("Special topics", eur(s.special_price)) + fact("Link insertion", linkIns(s.link_insertion)) + fact("DR", numCell(s.dr)) + fact("Traffic", numCell(s.traffic)) + "</div>" +
+      '<div class="facts">' + [["Casino", "casino"], ["Loans", "loan"], ["Crypto", "crypto"], ["Adult", "adult"]].map(([l, k]) => fact(l, topicCell(s, k))).join("") + fact("Sponsored", tagCell(s.sponsored_tag)) + "</div>";
+  const topics = "";
+  const inp = (label, key, ph) => '<div class="fld"><span class="label">' + label + '</span><input data-f="' + key + '" value="' + esc(has(s[key]) ? s[key] : "") + '" placeholder="' + (ph || "–") + '"></div>';
+  const editForm = '<div class="form-grid compact">' + inp("Price €", "price", "€") + inp("Special topics €", "special_price", "€") + inp("Link insertion", "link_insertion", "Yes, No or €") + inp("Sponsored tag", "sponsored_tag", "Yes or No") + inp("Casino", "casino", "Yes, No or €") + inp("Loans", "loan", "Yes, No or €") + inp("Crypto", "crypto", "Yes, No or €") + inp("Adult", "adult", "Yes, No or €") + inp("Country", "country") + inp("DR", "dr") + inp("Traffic", "traffic") +
     '<div class="fld full"><span class="label">Notes</span><textarea data-f="requirements" style="min-height:80px">' + esc(s.requirements) + '</textarea></div></div><div style="display:flex;gap:8px;margin-top:14px"><button class="ctl ctl--primary" data-sa="save">Save</button><button class="ctl" data-sa="cancel_edit">Cancel</button></div>';
+  const when = (ts) => new Date(ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const lastIn = d.thread.filter((m) => m.direction === "in" && m.kind === "reply").slice(-1)[0];
   const thread = d.thread.length ? d.thread.slice().reverse().map((m, i) => '<details class="msg ' + m.direction + '"' + (i === 0 || m.direction === "in" ? " open" : "") + '><summary class="mh"><span><b>' + (m.direction === "out" ? "You" : esc(m.from_addr)) + '</b><span class="tag">' + esc({ pitch: "Pitch", reply: "Reply", followup: "Follow-up", nudge: "Reminder", bounce: "Bounce" }[m.kind] || m.kind) + "</span>" + (m.test ? '<span class="tag">Test</span>' : "") + "</span><span>" + new Date(m.ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + '</span></summary><div class="small" style="margin:8px 0 6px">' + esc(m.subject) + '</div><div class="mb">' + esc(m.body) + "</div></details>").join("") : '<p class="small">Almo hasn\'t written to this website yet.</p>';
   dr.innerHTML = '<div class="drawer-head"><div class="grow"><h2 class="pagetitle dtitle">' + fav(s.domain) + esc(s.domain) + '</h2><div class="dsub">' + pill(s.status, d.statuses) + (s.country ? '<span class="muted">' + esc(s.country) + "</span>" : "") + '<a href="https://' + esc(s.domain) + '" target="_blank" rel="noopener">Open website ↗</a></div></div><button class="ctl ctl--icon" data-close-drawer aria-label="Close">' + icon("close") + "</button></div>" +
     '<div class="drawer-body">' + (s.note ? '<div class="banner' + (["bounced", "error"].includes(s.status) ? " bad" : "") + '">' + icon("info") + '<div class="grow">' + esc(s.note) + "</div></div>" : "") +
     (primary ? '<div class="dactions">' + primary + "</div>" : "") +
+    (s.draft ? '<section><div class="head"><h3 class="sec">Follow-up ready to send</h3></div>' + (lastIn ? '<div class="msg in quoted"><div class="mh"><span><b>' + esc(lastIn.from_addr) + '</b><span class="tag">Their reply</span></span><span>' + when(lastIn.ts) + '</span></div><div class="mb">' + esc(lastIn.body) + "</div></div>" : "") +
+      '<div class="fld"><textarea id="draftIn" style="min-height:150px">' + esc(s.draft) + '</textarea></div><div style="margin-top:12px"><button class="ctl ctl--primary" data-sa="send_draft">Send follow-up</button></div></section>' : "") +
     '<section><div class="head"><h3 class="sec">Terms</h3>' + (edit ? "" : '<button class="ctl ctl--tiny" data-sa="edit">Edit</button>') + "</div>" + (edit ? editForm : facts + topics + (s.requirements ? '<p class="notes">' + esc(s.requirements) + "</p>" : "")) + "</section>" +
-    (s.draft ? '<section><div class="head"><h3 class="sec">Follow-up ready to send</h3></div><div class="fld"><textarea id="draftIn" style="min-height:150px">' + esc(s.draft) + '</textarea></div><div style="margin-top:12px"><button class="ctl ctl--primary" data-sa="send_draft">Send follow-up</button></div></section>' : "") +
     '<section><div class="head"><h3 class="sec">Contact</h3></div><div class="inline"><div class="fld" style="flex:1"><input id="emailIn" value="' + esc(s.email) + '" placeholder="Add an email address"></div><button class="ctl" data-sa="set_email">Save email</button>' + (s.email ? '<button class="ctl ctl--icon" data-copy="' + esc(s.email) + '" title="Copy email">' + icon("copy") + "</button>" : "") + "</div>" +
     (s.emails.length > 1 ? '<p class="small" style="margin:10px 0 0">Also found: ' + s.emails.slice(1, 6).map(esc).join(", ") + "</p>" : "") + (s.fit_reason ? '<p class="small" style="margin:6px 0 0">Site check: ' + esc(s.fit_reason) + "</p>" : "") + "</section>" +
-    '<section><div class="head"><h3 class="sec">Emails</h3>' + (d.thread.length ? '<span class="small">' + d.thread.length + "</span>" : "") + "</div>" + thread + "</section>" +
+    '<section><div class="head"><h3 class="sec">Emails' + (d.thread.length ? ' <span class="count-inline">' + d.thread.length + "</span>" : "") + "</h3></div>" + thread + "</section>" +
     '<section class="dfoot"><button class="linkbtn danger" data-sa="remove">Remove from Almo</button></section></div>';
   if (!quiet) { dr.classList.add("open"); $("#scrim").classList.add("open"); dr.setAttribute("aria-hidden", "false"); dr.querySelector(".drawer-body").scrollTop = 0; }
   $$("input,textarea", dr).forEach((el) => { el.onfocus = () => (S.drawerEditing = true); });
@@ -452,11 +480,11 @@ async function renderPitch() {
     '<div class="card"><div class="fld full" style="margin-bottom:18px"><span class="label">Campaign name</span><input id="pName" value="' + esc(camp.name) + '"></div>' +
     '<div class="vtabs">' + pitches.map((p) => '<button data-pv="' + p.id + '" class="' + (p.id === cur.id ? "is-on" : "") + (p.active ? "" : " off") + '">Pitch ' + esc(p.label) + "</button>").join("") + '<button class="vadd" id="pAdd" title="Add another version to test against">' + icon("plus") + "A/B version</button></div>" +
     '<div class="form-grid"><div class="fld full"><span class="label">Subject</span><input id="pSubj" value="' + esc(cur.subject) + '"></div>' +
-    '<div class="fld full"><span class="label">Message</span><textarea id="pBody" style="min-height:300px">' + esc(cur.body) + '</textarea><span class="hint">Write in English. It\'s translated for each site, and the sending mailbox\'s signature is added.</span><div class="vars"><code data-ins="{domain}">{domain}</code></div></div></div>' +
+    '<div class="fld full"><span class="label">Message</span><textarea id="pBody" style="min-height:300px">' + esc(cur.body) + '</textarea><span class="hint">Write in English. It\'s translated for each site, and the sending mailbox\'s signature is added.</span><div class="vars"><span class="label">Insert</span><code data-ins="{domain}" title="Replaced with the website, e.g. delfi.lv">{domain}</code></div></div></div>' +
     '<div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap"><button class="ctl ctl--primary" id="pSave">Save pitch ' + esc(cur.label) + "</button>" +
-    (pitches.length > 1 ? '<button class="ctl" id="pToggle">' + (cur.active ? "Turn off" : "Turn on") + "</button>" + (cur.sent ? "" : '<button class="ctl ctl--danger" id="pDelV">Delete pitch ' + esc(cur.label) + "</button>") : "") +
+    (pitches.length > 1 ? '<button class="ctl" id="pToggle">' + (cur.active ? "Stop sending pitch " + esc(cur.label) : "Start sending pitch " + esc(cur.label)) + "</button>" + (cur.sent ? "" : '<button class="ctl ctl--danger" id="pDelV">Delete pitch ' + esc(cur.label) + "</button>") : "") +
     '<span style="flex:1"></span>' + (d.campaigns.length > 1 ? '<button class="linkbtn danger" id="pDel">Delete campaign</button>' : "") + "</div></div></div>" +
-    '<div><div class="head" style="margin-bottom:12px"><div><h2 class="sec">Preview · pitch ' + esc(cur.label) + '</h2></div><div class="inline"><input class="search" style="min-width:150px;padding-left:11px;background-image:none" id="pvDomain" value="delfi.lv"><select class="ctl" id="pvLang"><option value="">English</option><option value="lv">Latvian</option><option value="de">German</option><option value="lt">Lithuanian</option><option value="et">Estonian</option><option value="nl">Dutch</option><option value="pl">Polish</option><option value="el">Greek</option></select></div></div><div class="preview"><div class="ph" id="pvSubj">…</div><iframe id="pvFrame" title="Preview"></iframe></div></div></div>';
+    '<div><div class="head" style="margin-bottom:12px"><div><h2 class="sec">Preview · pitch ' + esc(cur.label) + '</h2></div><div class="inline"><input class="search" style="min-width:150px;padding-left:11px;background-image:none" id="pvDomain" value="delfi.lv" placeholder="Preview for website…" aria-label="Preview for website"><select class="ctl" id="pvLang"><option value="">English</option><option value="lv">Latvian</option><option value="de">German</option><option value="lt">Lithuanian</option><option value="et">Estonian</option><option value="nl">Dutch</option><option value="pl">Polish</option><option value="el">Greek</option></select></div></div><div class="preview"><div class="ph" id="pvSubj">…</div><iframe id="pvFrame" title="Preview"></iframe></div></div></div>';
   const preview = async () => {
     $("#pvSubj").innerHTML = '<span class="spin"></span>';
     try {
@@ -486,6 +514,8 @@ async function renderPitch() {
     try { await api("/api/campaigns/" + camp.id, { method: "DELETE" }); S.campaign = 0; S.pitch = null; store.set("almo-campaign", "0"); toast("Campaign deleted"); await refresh(); renderPitch(); } catch (e) { toast(e.message); }
   };
   $$("[data-ins]").forEach((c) => (c.onclick = () => { const t = $("#pBody"); const p = t.selectionStart; t.value = t.value.slice(0, p) + c.dataset.ins + t.value.slice(t.selectionEnd); t.focus(); }));
+  const grow = () => { const t = $("#pBody"); t.style.height = "auto"; t.style.height = Math.max(300, t.scrollHeight + 2) + "px"; };
+  $("#pBody").addEventListener("input", grow); grow();
   $("#pvLang").onchange = preview; $("#pvDomain").onchange = preview;
   preview();
 }
@@ -503,9 +533,9 @@ function renderSettings() {
     card("ai", "AI", "Reads websites and replies, pulls out the prices and writes follow-ups. Pick one.",
       '<div class="seg" id="aiprov" style="margin-bottom:18px">' + [["anthropic", "Claude"], ["openai", "OpenAI"], ["gemini", "Gemini"]].map(([k, l]) => '<button data-aip="' + k + '" class="' + ((st.ai_provider || "anthropic") === k ? "is-on" : "") + '">' + l + "</button>").join("") + "</div>" +
       (() => { const P = { anthropic: ["Anthropic API key", "anthropic_key", "sk-ant-…", "https://console.anthropic.com/settings/keys"], openai: ["OpenAI API key", "openai_key", "sk-…", "https://platform.openai.com/api-keys"], gemini: ["Gemini API key", "gemini_key", "AIza…", "https://aistudio.google.com/apikey"] }[st.ai_provider || "anthropic"];
-        return '<div class="fld"><span class="label">' + P[0] + '</span><input data-k="' + P[1] + '" type="password" placeholder="' + (st[P[1] + "_set"] ? "Saved" : P[2]) + '"><span class="hint"><a href="' + P[3] + '" target="_blank" rel="noopener">Get one ↗</a></span></div>'; })() +
+        return '<div class="fld"><span class="label">' + P[0] + '</span><input data-k="' + P[1] + '" type="password" placeholder="' + (st[P[1] + "_set"] ? "•••••••••••• saved" : P[2]) + '"><span class="hint"><a href="' + P[3] + '" target="_blank" rel="noopener">Get one ↗</a></span></div>'; })() +
       '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="ctl" data-test="ai">Save and test</button><span class="result" id="r-ai"></span></div>') +
-    card("sending", "Sending", "",
+    card("sending", "Sending", "Start with Test: every email goes to the mailbox that sends it, so you can check how it looks.",
       '<div class="modes">' + [["off", "Off", "Nothing is sent."], ["test", "Test", "Everything goes to you."], ["live", "Live", "Sends to the websites."]]
         .map(([k, t, p]) => '<button class="mode' + (st.send_mode === k ? " is-on" : "") + '" data-mode="' + k + '"><b><span class="dot' + (k === "live" ? " on" : k === "test" ? " warn" : "") + '"></span>' + t + "</b><p>" + p + "</p></button>").join("") + "</div>") +
     '<details class="card" id="auto"><summary class="sec" style="cursor:pointer">Advanced</summary><div style="margin-top:14px">' +
@@ -519,7 +549,7 @@ function renderSettings() {
     '<div class="savebar"><span class="small" id="saveNote"></span><button class="ctl ctl--primary" id="saveAll">Save</button></div></div>';
   const hash = location.hash.split("#")[2];
   if (hash && $("#" + hash)) setTimeout(() => $("#" + hash).scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-  $$("[data-k]", v).forEach((el) => (el.oninput = () => { S.settingsDirty = true; $("#saveNote").textContent = "Unsaved changes"; }));
+  $$("[data-k]", v).forEach((el) => (el.oninput = () => { markDirty(); }));
 }
 /* mailboxes */
 const BOX_HELP = { Gmail: "Google account → Security → App passwords", Fastmail: "Settings → Privacy & Security → App passwords", Zoho: "Zoho account → Security → App passwords. Servers: Zoho Mail → Settings → Mail accounts → IMAP" };
@@ -596,6 +626,11 @@ async function boxAction(a, id, t) {
   }
 }
 
+function markDirty() {
+  S.settingsDirty = true;
+  if ($("#saveNote")) $("#saveNote").textContent = "Unsaved changes";
+  if ($(".savebar")) $(".savebar").classList.add("dirty");
+}
 function collectSettings() {
   const out = {};
   $$("[data-k]").forEach((el) => {
@@ -612,6 +647,7 @@ function collectSettings() {
 async function saveSettings(quiet) {
   const r = await api("/api/settings", { body: collectSettings() });
   S.settingsDirty = false;
+  if ($(".savebar")) $(".savebar").classList.remove("dirty");
   if (r.problems && r.problems.length) { toast("Check: " + r.problems.join(", "), 5000); return false; }
   S.data.settings = r.settings;
   if ($("#saveNote")) $("#saveNote").textContent = "Saved";
@@ -673,7 +709,8 @@ async function previewAdd() {
     $("#addGo").disabled = !p.new.length;
     $("#addGo").textContent = p.new.length ? "Start " + p.new.length + " website" + (p.new.length === 1 ? "" : "s") : "Start";
     const st = S.data.settings;
-    $("#addInfo").textContent = st.send_mode === "off" ? "Sending is off: sites will be checked, nothing sent." : st.send_mode === "test" ? "Test mode: emails go to you." : "Live: pitches go out automatically.";
+    const info = !st.running ? ["warn", "Almo is paused: sites are added, nothing happens until you resume."] : st.send_mode === "off" ? ["", "Sending is off: sites will be checked, nothing sent."] : st.send_mode === "test" ? ["", "Test mode: emails go to your own mailbox."] : ["warn", "Live: pitches go out to these websites automatically."];
+    $("#addInfo").className = "grow " + info[0]; $("#addInfo").textContent = info[1];
   } catch (e) {}
 }
 async function loadFile(file) {
@@ -699,10 +736,11 @@ function route() {
   S.route = TITLES[path] ? path : "overview";
   if (qs) { const f = new URLSearchParams(qs).get("f"); if (f) S.filter = Object.keys({ all: 1, progress: 1, waiting: 1, attention: 1, done: 1, closed: 1 }).includes(f) ? f : statusToTab(f); }
   $("#title").textContent = S.route === "overview" ? (S.data && S.campaign ? (S.data.campaigns.find((c) => c.id === S.campaign) || {}).name || "Overview" : "Overview") : TITLES[S.route];
-  const subs = { overview: S.data ? fmt(S.data.funnel[0].value) + " websites in outreach" : "", database: "Every website we know, across all campaigns", websites: "Websites Almo is working on", attention: "Replies that need a look", pitch: "", settings: "" };
+  const subs = { overview: S.data ? fmt(S.data.funnel[0].value) + " websites in outreach" : "", database: "Every website we know, across all campaigns", websites: "Websites Almo is working on", attention: "Replies that need a look", pitch: "The email each website gets, with A/B versions", settings: "Mailboxes, AI and sending" };
   $("#subtitle").textContent = subs[S.route];
   $("#range").style.display = S.route === "overview" ? "" : "none";
-  $("#exportBtn").style.display = S.route === "database" ? "none" : "";
+  $("#exportBtn").hidden = ["pitch", "settings"].includes(S.route);
+  $("#importBtn").hidden = S.route !== "database";
   renderNav();
   if (!S.data) return;
   if (S.route === "overview") renderOverview();
@@ -768,7 +806,7 @@ document.addEventListener("click", async (e) => {
     const f = $("#boxForm"), keep = {}; $$("[data-b]", f).forEach((el) => { if (!/host|port/.test(el.dataset.b)) keep[el.dataset.b] = el.value; });
     S.boxProv = t.dataset.bp; rerenderBoxes(); Object.entries(keep).forEach(([k, val]) => { const el = $('[data-b="' + k + '"]'); if (el) el.value = val; }); return;
   }
-  if (t.dataset.sw) { t.classList.toggle("on"); S.settingsDirty = true; $("#saveNote").textContent = "Unsaved changes"; return; }
+  if (t.dataset.sw) { t.classList.toggle("on"); markDirty(); return; }
   if (t.dataset.test) {
     const which = t.dataset.test, out = $("#r-" + which);
     out.innerHTML = '<span class="spin"></span> Testing…';
@@ -780,7 +818,11 @@ document.addEventListener("click", async (e) => {
     refresh();
   }
 });
-$("#campBtn").onclick = (e) => { e.stopPropagation(); $("#campMenu").classList.toggle("open"); };
+$("#campBtn").onclick = (e) => {
+  e.stopPropagation(); $("#campMenu").classList.toggle("open");
+  // With the rail collapsed the list opens beside the button instead of below it.
+  $("#campList").style.top = document.documentElement.getAttribute("data-rail") === "collapsed" ? $("#campBtn").getBoundingClientRect().top + "px" : "";
+};
 $("#addCampaign").onclick = async () => {
   const name = prompt("Name the new campaign (e.g. Latvia, Germany casino):");
   if (!name) return;
@@ -789,7 +831,13 @@ $("#addCampaign").onclick = async () => {
   await refresh(); location.hash = "#/pitch"; route(); toast("Campaign created - write its pitch");
 };
 $("#addBtn").onclick = openAdd;
-$("#exportBtn").onclick = (e) => { e.preventDefault(); openExport(campQ(), S.campaign ? "Websites in this campaign" : "All websites in outreach"); };
+$("#exportBtn").onclick = (e) => {
+  e.preventDefault();
+  if (S.route === "database" && DB.sel.size && !DB.all) openExport("ids=" + [...DB.sel].join(","), fmt(DB.sel.size) + " selected website" + (DB.sel.size === 1 ? "" : "s"));
+  else if (S.route === "database") openExport("db=1&" + dbQuery(), DB.exportWhat);
+  else openExport(campQ(), S.campaign ? "Websites in this campaign" : "All websites in outreach");
+};
+$("#importFile").onchange = (e) => { if (e.target.files[0]) importDB(e.target.files[0]); e.target.value = ""; };
 $$("#expKind button").forEach((b) => (b.onclick = () => { EXP.kind = b.dataset.ek; renderExport(); }));
 ["#expMarkup", "#expMargin"].forEach((id) => ($(id).oninput = renderExport));
 $("#expGo").onclick = downloadExport;
@@ -819,9 +867,13 @@ $("#runchip").onclick = async () => {
 };
 $("#range").value = String(S.days);
 $("#range").onchange = (e) => { S.days = Number(e.target.value); store.set("almo-days", String(S.days)); refresh(); };
+const SUN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"/></svg>';
+const MOON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 10.2A5.8 5.8 0 0 1 5.8 2.5a5.8 5.8 0 1 0 7.7 7.7Z"/></svg>';
+function themeIcon() { const light = document.documentElement.getAttribute("data-theme") === "light"; $("#themeBtn").innerHTML = light ? MOON : SUN; $("#themeBtn").title = light ? "Dark theme" : "Light theme"; }
+themeIcon();
 $("#themeBtn").onclick = () => {
   const cur = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", cur); store.set("almo-theme", cur);
+  document.documentElement.setAttribute("data-theme", cur); store.set("almo-theme", cur); themeIcon();
   if (S.route === "overview" && S.data) drawChart($("#plot"), S.data.series);
 };
 $("#railToggle").onclick = () => {

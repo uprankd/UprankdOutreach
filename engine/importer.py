@@ -147,8 +147,10 @@ def _clean(field, raw):
             return "Yes"
         if low in NO:
             return "No"
-        if re.match(r"^\d", low):          # a price in a yes/no column = they accept it
-            return "Yes"
+        if re.match(r"^(€|eur)?\s*\d", low):
+            # A price in a topic column is that topic's own price; in the
+            # sponsored column it just means "yes".
+            return "Yes" if field == "sponsored_tag" else (_clean("price", raw) or "Yes")
         return "" if low in ("unknown", "?", "n/a") else text[:40]
     if field == "link_insertion":
         if low in YES:

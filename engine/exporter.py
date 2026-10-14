@@ -54,6 +54,32 @@ def client_price(price, markup=0.0, margin=0.0):
     return int(math.ceil(round(cost * (1 + float(markup or 0) / 100.0) + float(margin or 0), 6)))
 
 
+TOPICS = (("casino", "Casino"), ("loan", "Loans"), ("crypto", "Crypto"), ("adult", "Adult"))
+
+
+def topic_price(site, topic):
+    """What a topic costs on this site: its own price, else the special-topics
+    price, else the normal price when they simply said yes. 'No' when they
+    don't take it, None when unknown."""
+    v = str(site.get(topic) or "").strip()
+    if v.lower() == "no":
+        return "No"
+    own = _positive(v)
+    if own:
+        return own
+    if v.lower() == "yes":
+        return _positive(site.get("special_price")) or _positive(site.get("price"))
+    return None
+
+
+def _positive(value):
+    try:
+        n = float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
 def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=False):
     out = []
     for r in rows(campaign_id, "prices", ids):
@@ -62,7 +88,9 @@ def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=Fals
             continue
         row = {"domain": r["domain"], "price": price, "requirements": r.get("requirements") or ""}
         if special:
-            row["special"] = client_price(r.get("special_price"), markup, margin) or ""
+            for key, _label in TOPICS:
+                t = topic_price(r, key)
+                row[key] = "No" if t == "No" else (client_price(t, markup, margin) if t else "")
         out.append(row)
     return out
 
@@ -75,7 +103,7 @@ def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, speci
 
     cols = [("Website", "domain", 30), ("Price (EUR)", "price", 13)]
     if special:
-        cols.append(("Casino / crypto / loan price (EUR)", "special", 18))
+        cols += [("%s (EUR)" % label, key, 12) for key, label in TOPICS]
     cols.append(("Requirements", "requirements", 60))
     wb = Workbook()
     ws = wb.active
@@ -92,7 +120,7 @@ def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, speci
         for row in ws.iter_rows(min_row=2, min_col=i, max_col=i):
             for cell in row:
                 cell.alignment = Alignment(wrap_text=_k == "requirements", vertical="top")
-                if _k in ("price", "special"):
+                if _k in ("price",) + tuple(k for k, _ in TOPICS):
                     cell.number_format = '#,##0" €"'
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions

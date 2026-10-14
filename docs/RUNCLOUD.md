@@ -1,5 +1,7 @@
 # Almo uz RunCloud servera
 
+> Īss palaišanas saraksts angliski: [LAUNCH.md](LAUNCH.md).
+
 Instrukcija, kā Almo uzlikt un uzturēt uz RunCloud pārvaldīta servera (piemēram, `outreach.uprankd.com`).
 
 Ir divi veidi, un tos var apvienot:
@@ -295,9 +297,9 @@ Ieteicams kopijas reizi nedēļā aizsūtīt arī ārpus servera.
 
 ## 7. Iestatījumi uz servera
 
-- Almo ar servera pārlūkā atver tieši tāpat kā datorā: **Settings → Email, AI, Sending**.
+- Almo ar servera pārlūkā atver tieši tāpat kā datorā: **Settings → Mailboxes, AI, Sending**.
 - **Paroles un API atslēgas.** Uz servera nav Mac Keychain, tāpēc Almo tās glabā datubāzes `settings` tabulā. Tāpēc datubāzei nedrīkst būt publiskas piekļuves (1. solis), un backup faili jāglabā drošā vietā.
-- **Viens serveris = viens e-pasts.** B variantā visi, kas atver lapu, sūta no Settings norādītā e-pasta.
+- **Vairākas pastkastes.** Settings → Mailboxes var pievienot vairākas (Gmail, Fastmail, Zoho). Jaunie piedāvājumi tiek sadalīti vienmērīgi starp aktīvajām, katrai savs dienas limits; sarakste vienmēr turpinās no tās pastkastes, kas to sāka.
 - **Datora un servera Almo kopā.** Ja kāds vienlaikus lieto datora Almo ar to pašu datubāzi (A variants), tas ir droši: viena mājaslapa nekad nesaņems e-pastu divreiz. Atbildes Almo lasa tajā pastkastē, no kuras sūtīts.
 - **Laiks.** "Sending hours" skatās servera laiku. Iestati Rīgas laiku: `timedatectl set-timezone Europe/Riga`, tad restartē Almo.
 

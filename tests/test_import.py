@@ -52,7 +52,7 @@ def main():
           and d["crypto"] == "No" and d["requirements"] == "Dofollow" and d["country"] == "Latvia",
           "headers matched by name (Latvian too), values cleaned")
     t = db.sites("domain='tvnet.lv'")[0]
-    check(t["price"] == "90" and t["casino"] == "Yes", "'€ 90' -> 90, a price in Casino -> Yes")
+    check(t["price"] == "90" and t["casino"] == "250", "'€ 90' -> 90, a price in Casino is the casino price")
     b = db.sites("domain='bild.de'")[0]
     check(b["country"] == "Germany" and b["price"] == "1200", "sheet name 'DE' -> Germany, 1.200,00 -> 1200")
     check(d["status"] == "in_db", "imported sites wait in the database, nobody is emailed")

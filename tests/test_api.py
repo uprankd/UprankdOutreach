@@ -89,6 +89,7 @@ def main():
 
     # Database: email + sponsored tag columns
     db.update_site(sid, email="info@sent-one.lv", sponsored_tag="No", price="100", special_price="180",
+                   casino="Yes", loan="300", crypto="No",
                    requirements="Dofollow, 1 link")
     db.add_sites(camp, ["noprice-two.lv"])
     rows = c.get("/api/db?sort=sponsored").get_json()["rows"]
@@ -104,10 +105,11 @@ def main():
     from openpyxl import load_workbook
     ws = load_workbook(io.BytesIO(r.data)).active
     data = list(ws.iter_rows(values_only=True))
-    check(list(data[0]) == ["Website", "Price (EUR)", "Casino / crypto / loan price (EUR)", "Requirements"],
-          "client file columns: website, client price, requirements")
-    check(data[1] == ("sent-one.lv", 140, 244, "Dofollow, 1 link") and len(data) == 2,
-          "client file: marked-up prices, no costs, no sites without a price")
+    check(list(data[0]) == ["Website", "Price (EUR)", "Casino (EUR)", "Loans (EUR)", "Crypto (EUR)",
+                            "Adult (EUR)", "Requirements"],
+          "client file columns: website, client price, topic prices, requirements")
+    check(data[1] == ("sent-one.lv", 140, 244, 400, "No", None, "Dofollow, 1 link") and len(data) == 2,
+          "client file: marked-up prices (topic's own price wins over the special price), no costs")
     flat = " ".join(str(v) for row in data for v in row)
     check("info@" not in flat and "100" not in flat.split(), "no emails or our costs in the client file")
     r = c.get("/api/export?ids=%d" % sid)

@@ -291,7 +291,9 @@ def state():
     return jsonify({
         "metrics": metrics, "series": series, "funnel": funnel, "by_status": by_status,
         "statuses": STATUS, "events": db.events(30),
-        "campaigns": db.query("SELECT c.*, (SELECT COUNT(*) FROM sites s WHERE s.campaign_id=c.id) AS n "
+        "campaigns": db.query("SELECT c.*, (SELECT COUNT(*) FROM sites s WHERE s.campaign_id=c.id AND "
+                              "NOT (s.status IN ('in_db','own') OR (s.source='import' AND s.sent_at IS NULL "
+                              "AND s.status='declined'))) AS n "
                               "FROM campaigns c ORDER BY c.id"),
         "settings": settings.public(), "missing": missing, "setup": setup,
         "user": session.get("user") if auth.config() else None,
@@ -699,6 +701,8 @@ SORTS = {
     "link": "link_insertion", "email": "email", "sponsored": "sponsored_tag",
 }
 NUM = "num(price)"
+# A topic is accepted when it says Yes or carries its own price.
+ACCEPTS = "(lower(%s)='yes' OR num(%s) IS NOT NULL)"
 
 
 def db_where(a):
@@ -723,7 +727,7 @@ def db_where(a):
             pass
     for n in [x for x in (a.get("niches") or "").split(",") if x]:
         if n in ("casino", "loan", "crypto", "adult"):
-            where.append("lower(%s)='yes'" % n)
+            where.append(ACCEPTS % (n, n))
         elif n == "link":
             where.append("(lower(link_insertion)='yes' OR num(link_insertion) IS NOT NULL)")
         elif n == "unmarked":
@@ -752,7 +756,7 @@ def db_list():
     total = db.one("SELECT COUNT(*) AS n FROM sites WHERE %s" % where, tuple(args))["n"]
     priced = db.one("SELECT COUNT(*) AS n, AVG(%s) AS avg, MIN(%s) AS lo, MAX(%s) AS hi FROM sites "
                     "WHERE %s AND %s" % (NUM, NUM, NUM, where, STAGES["priced"]), tuple(args))
-    casino = db.one("SELECT COUNT(*) AS n FROM sites WHERE %s AND lower(casino)='yes'" % where,
+    casino = db.one("SELECT COUNT(*) AS n FROM sites WHERE %s AND %s" % (where, ACCEPTS % ("casino", "casino")),
                     tuple(args))["n"]
     countries_ = db.query("SELECT country, COUNT(*) AS n FROM sites WHERE country<>'' "
                           "GROUP BY country ORDER BY n DESC")
