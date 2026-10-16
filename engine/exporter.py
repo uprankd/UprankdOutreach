@@ -12,7 +12,7 @@ COLUMNS = [
     ("Website", "domain", 26), ("Email", "email", 30), ("Status", "status_label", 18),
     ("Price (EUR)", "price", 12), ("Special topics price (EUR)", "special_price", 14),
     ("Uprankd price (EUR)", "uprankd_price", 12), ("Uprankd special (EUR)", "uprankd_special", 12),
-    ("Casino", "casino", 9), ("Loan", "loan", 9), ("Crypto", "crypto", 9), ("Adult", "adult", 9),
+    ("Casino", "casino", 9), ("Casino without licence", "casino_nolicense", 12), ("Loan", "loan", 9), ("Crypto", "crypto", 9), ("Adult", "adult", 9),
     ("Marked sponsored", "sponsored_tag", 11), ("Link insertion", "link_insertion", 12),
     ("Requirements / notes", "requirements", 48), ("Country", "country", 14),
     ("DR", "dr", 7), ("Traffic", "traffic", 11), ("Language", "language", 9),
@@ -117,6 +117,7 @@ def client_rows(campaign_id=None, ids=None, markup=0.0, margin=0.0, special=Fals
             for key, _label in TOPICS:
                 t = topic_price(r, key)
                 row[key] = "No" if t == "No" else (client_price(t, markup, margin, minimum, step) if t else "")
+            row["casino_nolicense"] = r.get("casino_nolicense") or ""
         out.append(row)
     return out
 
@@ -130,6 +131,7 @@ def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, speci
     cols = [("Website", "domain", 30), ("Price (EUR)", "price", 13)]
     if special:
         cols += [("%s (EUR)" % label, key, 12) for key, label in TOPICS]
+        cols.insert(3, ("Casino without licence", "casino_nolicense", 12))
     cols.append(("Requirements", "requirements", 60))
     wb = Workbook()
     ws = wb.active
@@ -141,6 +143,9 @@ def write_client(path, campaign_id=None, ids=None, markup=0.0, margin=0.0, speci
         cell.alignment = Alignment(vertical="center")
     for r in client_rows(campaign_id, ids, markup, margin, special, minimum, step):
         ws.append([r.get(k, "") for _l, k, _w in cols])
+        if special and r.get("casino_nolicense") == "Yes":
+            _mark_nolicence(ws.cell(ws.max_row, 3))
+            _mark_nolicence(ws.cell(ws.max_row, 4))
     for i, (_l, _k, width) in enumerate(cols, start=1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = width
         for row in ws.iter_rows(min_row=2, min_col=i, max_col=i):
@@ -166,6 +171,7 @@ def write(path, campaign_id=None, only=None, ids=None):
         cell.font = Font(bold=True, color="F1F2F5")
         cell.fill = head
         cell.alignment = Alignment(vertical="center")
+    ci = [k for _l, k, _w in COLUMNS].index("casino") + 1
     for r in rows(campaign_id, only, ids):
         values = []
         for _label, key, _w in COLUMNS:
@@ -174,11 +180,22 @@ def write(path, campaign_id=None, only=None, ids=None):
                 v = float(v) if "." in str(v) else int(v)
             values.append(v if v is not None else "")
         ws.append(values)
+        if r.get("casino_nolicense") == "Yes":
+            _mark_nolicence(ws.cell(ws.max_row, ci))
+            _mark_nolicence(ws.cell(ws.max_row, ci + 1))
     for i, (_l, _k, width) in enumerate(COLUMNS, start=1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = width
     ws.freeze_panes = "B2"
     ws.auto_filter.ref = ws.dimensions
     return _save(wb, path)
+
+
+def _mark_nolicence(cell):
+    """Casino without a licence stands out in purple, like in Almo."""
+    from openpyxl.styles import Font, PatternFill
+
+    cell.fill = PatternFill("solid", fgColor="EDE7FB")
+    cell.font = Font(color="5B2BC4", bold=True)
 
 
 def _save(wb, path):

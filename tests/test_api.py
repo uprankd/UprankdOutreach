@@ -5,6 +5,7 @@ through the same HTTP API the browser uses.
 """
 
 import io
+import time
 import os
 import shutil
 import sys
@@ -33,7 +34,8 @@ def main():
     db.init()
     if db.KIND == "postgres":   # a clean shared database for the test
         with db.tx() as conn:
-            for t in ("sites", "messages", "events", "mailboxes", "pitches", "campaigns", "settings", "seen_mail"):
+            for t in ("sites", "messages", "events", "mailboxes", "pitches", "campaigns", "settings", "seen_mail",
+                      "stars", "changes"):
                 conn.execute("DELETE FROM %s" % t)
         db.init()
     c = almo.app.test_client()
@@ -106,10 +108,10 @@ def main():
     from openpyxl import load_workbook
     ws = load_workbook(io.BytesIO(r.data)).active
     data = list(ws.iter_rows(values_only=True))
-    check(list(data[0]) == ["Website", "Price (EUR)", "Casino (EUR)", "Loans (EUR)", "Crypto (EUR)",
+    check(list(data[0]) == ["Website", "Price (EUR)", "Casino (EUR)", "Casino without licence", "Loans (EUR)", "Crypto (EUR)",
                             "Adult (EUR)", "Requirements"],
           "client file columns: website, client price, topic prices, requirements")
-    check(data[1] == ("sent-one.lv", 140, 244, 400, "No", None, "Dofollow, 1 link") and len(data) == 2,
+    check(data[1] == ("sent-one.lv", 140, 244, None, 400, "No", None, "Dofollow, 1 link") and len(data) == 2,
           "client file: marked-up prices (topic's own price wins over the special price), no costs")
     flat = " ".join(str(v) for row in data for v in row)
     check("info@" not in flat and "100" not in flat.split(), "no emails or our costs in the client file")
@@ -143,6 +145,60 @@ def main():
     check(detail["contact"]["link_builder"], "the website panel knows it's a link builder's address")
     c.post("/api/sites/%d/action" % aid, json={"action": "find_direct"})
     check(db.get_site(aid)["lookup"] == 1, "'Find the site's own contact' queues a lookup")
+    # Stars: each person's own list in the menu, with a dot when a reply comes in
+    camp1 = db.one("SELECT id FROM campaigns ORDER BY id")["id"]
+    db.add_sites(camp1, ["star-one.lv", "star-two.lv"])
+    s1 = db.sites("domain=?", ("star-one.lv",))[0]["id"]
+    s2 = db.sites("domain=?", ("star-two.lv",))[0]["id"]
+    r = c.post("/api/sites/%d/star" % s1, json={"on": True}).get_json()
+    check(r["starred"] and [x["domain"] for x in r["list"]] == ["star-one.lv"], "a star puts the website in your list")
+    check([x["domain"] for x in c.get("/api/state").get_json()["starred"]] == ["star-one.lv"], "the menu gets the starred list")
+    check(c.get("/api/sites/%d" % s1).get_json()["starred"], "the panel knows it's starred")
+    rows = {x["domain"]: x for x in c.get("/api/db?q=star-").get_json()["rows"]}
+    check(rows["star-one.lv"]["starred"] and not rows["star-two.lv"]["starred"], "the table shows which are starred")
+    check([x["domain"] for x in c.get("/api/db?niches=starred").get_json()["rows"]] == ["star-one.lv"], "filter: starred only")
+    time.sleep(0.02)
+    db.add_message(s1, "in", "reply", "ads@star-one.lv", "me@uprankd.com", "Re", "150 EUR")
+    check(c.get("/api/state").get_json()["starred"][0]["new"], "a reply since you last looked shows as new")
+    time.sleep(0.02)
+    c.get("/api/sites/%d" % s1)
+    check(not c.get("/api/state").get_json()["starred"][0]["new"], "opening the website clears it")
+    with db.tx() as conn:
+        conn.execute("INSERT INTO stars (user_key, site_id, ts, seen_at) VALUES (?,?,?,?)",
+                     ("someone@uprankd.com", s2, time.time(), time.time()))
+    check([x["domain"] for x in c.get("/api/state").get_json()["starred"]] == ["star-one.lv"],
+          "someone else's stars don't show in your list")
+    c.post("/api/sites/%d/star" % s1, json={"on": False})
+    check(c.get("/api/state").get_json()["starred"] == [], "un-starring removes it")
+
+    # Casino without a licence
+    db.update_site(s1, casino="300")
+    c.post("/api/sites/%d/action" % s1, json={"action": "save", "fields": {"casino_nolicense": "not required"}})
+    check(db.get_site(s1)["casino_nolicense"] == "Yes", "panel edit: 'not required' is saved as Yes")
+    only = [x["domain"] for x in c.get("/api/db?niches=nolicense").get_json()["rows"]]
+    check(only == ["star-one.lv"], "filter: casino without licence")
+    r = c.get("/api/export?ids=%d" % s1)
+    ws = load_workbook(io.BytesIO(r.data)).active
+    head = [x.value for x in ws[1]]
+    col = head.index("Casino without licence") + 1
+    check(ws.cell(2, col).value == "Yes" and ws.cell(2, head.index("Casino") + 1).fill.fgColor.rgb.endswith("EDE7FB"),
+          "export: licence column, casino cell purple")
+
+    # Outreach groups: put database websites into one campaign's outreach
+    cz = c.post("/api/campaigns", json={"name": "CZ (SF2)"}).get_json()["id"]
+    db.update_site(s2, status="in_db")
+    db.update_site(s1, status="replied", sent_at=time.time())
+    r = c.post("/api/db/bulk", json={"action": "outreach", "value": cz, "ids": [s1, s2]}).get_json()
+    check(r["moved"] == 2 and r["count"] == 1, "both move to the group, only the new one is queued")
+    check(db.get_site(s2)["status"] == "queued" and db.get_site(s1)["status"] == "replied",
+          "a conversation already going isn't restarted")
+    grp = sorted(x["domain"] for x in c.get("/api/db?group=%d" % cz).get_json()["rows"])
+    check(grp == ["star-one.lv", "star-two.lv"], "filter: websites in the CZ (SF2) outreach")
+    check(c.post("/api/db/bulk", json={"action": "outreach", "value": 9999, "ids": [s1]}).status_code == 400,
+          "an unknown group is refused")
+    c.post("/api/sites/%d/star" % s2, json={"on": True})
+    c.post("/api/sites/%d/action" % s2, json={"action": "remove"})
+    check(c.get("/api/state").get_json()["starred"] == [], "a removed website leaves the starred list")
     print("\nAll checks passed.")
 
 

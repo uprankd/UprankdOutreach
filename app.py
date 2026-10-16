@@ -333,6 +333,7 @@ def state():
         "worker": worker.status(cfg),
         "attention": total("status IN ('needs_you','replied','error')"),
         "changes_new": _unseen_changes(),
+        "starred": db.starred(_user_key()),
         "days": days,
     })
 
@@ -367,13 +368,32 @@ def list_sites():
     return jsonify({"rows": rows, "counts": counts, "statuses": STATUS})
 
 
+def _user_key():
+    """Whose stars these are: the signed-in Google account, or this computer."""
+    u = session.get("user") if auth.config() else None
+    return (u or {}).get("email") or "local"
+
+
+@app.post("/api/sites/<int:sid>/star")
+def star_site(sid):
+    if not db.get_site(sid):
+        return jsonify({"error": "Not found"}), 404
+    on = bool((request.json or {}).get("on", True))
+    db.star(_user_key(), sid, on)
+    return jsonify({"ok": True, "starred": on, "list": db.starred(_user_key())})
+
+
 @app.get("/api/sites/<int:sid>")
 def site_detail(sid):
     site = db.get_site(sid)
     if not site:
         return jsonify({"error": "Not found"}), 404
     shared = db.one("SELECT COUNT(*) AS n FROM sites WHERE email=?", (site["email"],))["n"] if site["email"] else 0
-    return jsonify({"site": site, "thread": db.thread(sid), "events": db.events(50, sid),
+    key = _user_key()
+    is_starred = sid in db.starred_ids(key)
+    if is_starred:
+        db.star_seen(key, sid)
+    return jsonify({"site": site, "starred": is_starred, "thread": db.thread(sid), "events": db.events(50, sid),
                     "changes": db.changes(sid, 60), "statuses": STATUS,
                     "contact": {"link_builder": contacts.is_link_builder(site["domain"], site["email"], shared),
                                 "shared": shared}})
@@ -474,7 +494,10 @@ def site_action(sid):
         db.update_site(sid, status="declined", note="Closed by you", draft="")
     elif action == "save":
         fields = {k: str(v).strip() for k, v in (data.get("fields") or {}).items()
-                  if k in ai_mod.FIELDS + ("requirements", "note", "country", "dr", "traffic")}
+                  if k in ai_mod.FIELDS + ("requirements", "note", "country", "dr", "traffic", "casino_nolicense")}
+        if "casino_nolicense" in fields:
+            import licence
+            fields["casino_nolicense"] = licence.clean(fields["casino_nolicense"]) if fields["casino_nolicense"] else ""
         db.update_site(sid, **fields)
     elif action == "send_draft":
         body = (data.get("body") or site["draft"] or "").strip()
@@ -763,6 +786,11 @@ def db_where(a):
     if camp:
         where.append("campaign_id=?")
         args.append(camp)
+    group = int(a.get("group") or 0)
+    if group:
+        # In that campaign's outreach: queued, contacted or closed - not just sitting in the database
+        where.append("campaign_id=? AND status NOT IN ('in_db','own')")
+        args.append(group)
     q = (a.get("q") or "").strip().lower()
     if q:
         where.append("(lower(domain) LIKE ? OR lower(email) LIKE ? OR lower(requirements) LIKE ?)")
@@ -784,6 +812,11 @@ def db_where(a):
             where.append("(lower(link_insertion)='yes' OR num(link_insertion) IS NOT NULL)")
         elif n == "unmarked":
             where.append("lower(sponsored_tag)='no'")
+        elif n == "nolicense":
+            where.append("casino_nolicense='Yes'")
+        elif n == "starred":
+            where.append("id IN (SELECT site_id FROM stars WHERE user_key=?)")
+            args.append(_user_key())
         elif n == "notes":
             where.append("COALESCE(requirements, '')<>''")
         elif n == "builder":
@@ -813,7 +846,8 @@ def db_list():
     nulls = "(%s IS NULL OR %s='')" % (sort, sort) if text_sort else "%s IS NULL" % sort
     rows = db.query("SELECT id, domain, country, email, status, price, special_price, casino, loan, "
                     "crypto, adult, sponsored_tag, link_insertion, requirements, dr, traffic, "
-                    "sent_at, replied_at, updated_at, source, note FROM sites WHERE %s "
+                    "sent_at, replied_at, updated_at, source, note, casino_nolicense, campaign_id "
+                    "FROM sites WHERE %s "
                     "ORDER BY %s, %s %s, domain ASC LIMIT ? OFFSET ?" % (where, nulls, sort, direction),
                     tuple(args) + (per, page * per))
     total = db.one("SELECT COUNT(*) AS n FROM sites WHERE %s" % where, tuple(args))["n"]
@@ -827,6 +861,7 @@ def db_list():
         "SELECT price AS p FROM sites WHERE %s AND %s" % (where, STAGES["priced"]), tuple(args))) if v)
     median = prices[len(prices) // 2] if prices else 0
     shared = contacts.shared_counts()
+    stars = db.starred_ids(_user_key())
     recent = {}
     if rows:
         marks = ",".join(str(int(r["id"])) for r in rows)
@@ -838,6 +873,7 @@ def db_list():
         r["link_builder"] = contacts.is_link_builder(r["domain"], r["email"], n)
         r["shared"] = n
         r["changed"] = recent.get(r["id"])
+        r["starred"] = r["id"] in stars
     return jsonify({"rows": rows, "total": total, "page": page, "per": per,
                     "summary": {"total": total, "priced": priced["n"], "median": round(median),
                                 "avg": round(priced["avg"] or 0), "lo": priced["lo"],
@@ -889,6 +925,7 @@ def db_bulk():
     if not ids:
         return jsonify({"error": "Nothing selected"}), 400
     marks = ",".join("?" * len(ids))
+    extra = {}
     with db.tx() as conn:
         if action == "ask":
             # Only websites Almo hasn't written to yet; others are left alone.
@@ -900,7 +937,19 @@ def db_bulk():
             conn.execute("DELETE FROM messages WHERE site_id IN (%s)" % marks, ids)
             conn.execute("DELETE FROM events WHERE site_id IN (%s)" % marks, ids)
             conn.execute("DELETE FROM changes WHERE site_id IN (%s)" % marks, ids)
+            conn.execute("DELETE FROM stars WHERE site_id IN (%s)" % marks, ids)
             n = conn.execute("DELETE FROM sites WHERE id IN (%s)" % marks, ids).rowcount
+        elif action == "outreach":
+            # Move them into one campaign's outreach. Ones Almo hasn't written to yet are
+            # queued there; ones already in a conversation keep it and just change group.
+            camp = int(data.get("value") or 0)
+            if not db.one("SELECT id FROM campaigns WHERE id=?", (camp,)):
+                return jsonify({"error": "Pick an outreach group"}), 400
+            moved = conn.execute("UPDATE sites SET campaign_id=? WHERE id IN (%s)" % marks, [camp] + ids).rowcount
+            n = conn.execute("UPDATE sites SET status='queued', attempts=0, next_try_at=0, note='' "
+                             "WHERE id IN (%s) AND sent_at IS NULL AND status IN "
+                             "('in_db','no_email','not_fit','error')" % marks, ids).rowcount
+            extra = {"moved": moved}
         elif action == "country":
             n = conn.execute("UPDATE sites SET country=? WHERE id IN (%s)" % marks,
                              [data.get("value") or ""] + ids).rowcount
@@ -911,7 +960,7 @@ def db_bulk():
             return jsonify({"error": "Unknown action"}), 400
     worker.dirty = True
     worker.poke()
-    return jsonify({"ok": True, "count": n})
+    return jsonify({"ok": True, "count": n, **extra})
 
 @app.get("/api/export/count")
 def export_count():

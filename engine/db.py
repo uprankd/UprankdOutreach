@@ -115,6 +115,9 @@ def _schema(kind):
             old_value TEXT DEFAULT '', new_value TEXT DEFAULT '', actor TEXT DEFAULT '')""",
         "CREATE INDEX IF NOT EXISTS changes_site ON changes(site_id)",
         "CREATE INDEX IF NOT EXISTS changes_ts ON changes(ts)",
+        """CREATE TABLE IF NOT EXISTS stars (
+            user_key TEXT NOT NULL, site_id INTEGER NOT NULL, ts {REAL} NOT NULL,
+            seen_at {REAL} NOT NULL, PRIMARY KEY (user_key, site_id))""",
     )]
 
 
@@ -236,7 +239,8 @@ MIGRATIONS = {
     "sites": [("country", "TEXT DEFAULT ''"), ("source", "TEXT DEFAULT 'almo'"),
               ("dr", "TEXT DEFAULT ''"), ("traffic", "TEXT DEFAULT ''"),
               ("contacted_before", "INTEGER DEFAULT 0"), ("mailbox_id", "INTEGER"),
-              ("pitch_id", "INTEGER"), ("lookup", "INTEGER DEFAULT 0")],
+              ("pitch_id", "INTEGER"), ("lookup", "INTEGER DEFAULT 0"),
+              ("casino_nolicense", "TEXT DEFAULT ''")],
 }
 
 
@@ -272,6 +276,23 @@ def init():
     import settings
 
     settings.migrate_mailbox()
+    _licence_from_notes()
+
+
+def _licence_from_notes():
+    """Once: read 'License not required' / 'Must have a license' out of the
+    notes we already have, for websites that take casino."""
+    if get_settings().get("_licence_v1"):
+        return
+    import licence
+
+    with tx() as conn:
+        for r in conn.execute("SELECT id, requirements FROM sites WHERE COALESCE(casino_nolicense,'')='' "
+                              "AND COALESCE(requirements,'')<>''").fetchall():
+            v = licence.from_text(dict(r)["requirements"])
+            if v:
+                conn.execute("UPDATE sites SET casino_nolicense=? WHERE id=?", (v, dict(r)["id"]))
+    save_settings({"_licence_v1": True})
 
 
 # --------------------------------------------------------------------------- #
@@ -283,13 +304,13 @@ SITE_FIELDS = {
     "price", "special_price", "casino", "loan", "crypto", "adult", "sponsored_tag",
     "link_insertion", "requirements", "draft", "attempts", "next_try_at",
     "campaign_id", "country", "source", "dr", "traffic", "contacted_before",
-    "mailbox_id", "pitch_id", "lookup",
+    "mailbox_id", "pitch_id", "lookup", "casino_nolicense",
 }
 
 # --------------------------------------------------------------------------- #
 # Change history: who changed what on a website, and when
 # --------------------------------------------------------------------------- #
-TRACKED = ("email", "price", "special_price", "casino", "loan", "crypto", "adult",
+TRACKED = ("email", "price", "special_price", "casino", "casino_nolicense", "loan", "crypto", "adult",
            "sponsored_tag", "link_insertion", "requirements", "country", "dr", "traffic",
            "status")
 _who = threading.local()
@@ -400,6 +421,7 @@ def delete_site(site_id):
         conn.execute("DELETE FROM messages WHERE site_id=?", (site_id,))
         conn.execute("DELETE FROM events WHERE site_id=?", (site_id,))
         conn.execute("DELETE FROM changes WHERE site_id=?", (site_id,))
+        conn.execute("DELETE FROM stars WHERE site_id=?", (site_id,))
         conn.execute("DELETE FROM sites WHERE id=?", (site_id,))
 
 
@@ -518,3 +540,38 @@ def save_settings(values):
             conn.execute("INSERT INTO settings (key, value) VALUES (?,?) "
                          "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                          (key, json.dumps(value)))
+
+
+# --------------------------------------------------------------------------- #
+# Starred websites - each person keeps their own list
+# --------------------------------------------------------------------------- #
+def star(user_key, site_id, on=True):
+    with tx() as conn:
+        conn.execute("DELETE FROM stars WHERE user_key=? AND site_id=?", (user_key, site_id))
+        if on:
+            now = time.time()
+            conn.execute("INSERT INTO stars (user_key, site_id, ts, seen_at) VALUES (?,?,?,?)",
+                         (user_key, site_id, now, now))
+
+
+def star_seen(user_key, site_id):
+    with tx() as conn:
+        conn.execute("UPDATE stars SET seen_at=? WHERE user_key=? AND site_id=?",
+                     (time.time(), user_key, site_id))
+
+
+def starred_ids(user_key):
+    return {r["site_id"] for r in query("SELECT site_id FROM stars WHERE user_key=?", (user_key,))}
+
+
+def starred(user_key):
+    """Starred websites, newest activity first. 'new' = a reply came in since
+    this person last opened the website."""
+    rows = query(
+        "SELECT s.id, s.domain, s.status, s.price, st.ts AS starred_at, st.seen_at, "
+        "(SELECT MAX(m.ts) FROM messages m WHERE m.site_id=s.id AND m.direction='in') AS last_in "
+        "FROM stars st JOIN sites s ON s.id=st.site_id WHERE st.user_key=?", (user_key,))
+    for r in rows:
+        r["new"] = bool(r["last_in"] and r["last_in"] > r["seen_at"])
+    rows.sort(key=lambda r: (not r["new"], -(r["last_in"] or r["starred_at"])))
+    return rows

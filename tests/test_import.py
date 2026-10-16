@@ -100,6 +100,21 @@ def main():
     d = db.sites("domain='delfi.lv'")[0]
     check(str(d["dr"]) == "74" and str(d["traffic"]) == "620000", "with the box, DR and traffic update")
     check(d["price"] == "175", "updating metrics leaves the price alone")
+    # Casino without a licence: from its own column, or read from the notes
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Spain"
+    ws.append(["Website", "Casino", "Accept without a license for casino", "Requirments/comments"])
+    ws.append(["col-yes.es", "300", "Yes", ""])
+    ws.append(["note-yes.es", "250", "", "License not required. 500 words."])
+    ws.append(["note-no.es", "250", "", "Gambling license required."])
+    ws.append(["plain.es", "250", "", "Dofollow"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    importer.run("es.xlsx", buf.getvalue(), None)
+    got = {d: db.sites("domain=?", (d,))[0]["casino_nolicense"] for d in ("col-yes.es", "note-yes.es", "note-no.es", "plain.es")}
+    check(got == {"col-yes.es": "Yes", "note-yes.es": "Yes", "note-no.es": "No", "plain.es": ""},
+          "licence: from the column, else from the notes, else unknown")
     print("\nAll checks passed.")
 
 

@@ -14,6 +14,7 @@ import time
 import countries
 import db
 import finder
+import licence
 
 HINTS = {
     "domain": ("website", "websites", "site", "domain", "domains", "url", "portal", "portals",
@@ -25,6 +26,10 @@ HINTS = {
     "special_price": ("special content portal price", "special portal price",
                       "special content price", "special price", "casino price",
                       "grey niche price", "special topics price", "special topics price (eur)"),
+    "casino_nolicense": ("accept without a license for casino", "accept without a licence for casino",
+                         "casino without license", "casino without licence", "without license",
+                         "without licence", "no license", "no licence", "casino no license",
+                         "kazino bez licences", "bez licences"),
     "casino": ("casino", "gambling", "kazino"),
     "loan": ("loan", "loans", "aizdevumi", "kredīti", "finance"),
     "crypto": ("crypto", "cryptocurrency", "kripto"),
@@ -46,7 +51,7 @@ HINTS = {
 YES = {"yes", "y", "jā", "ja", "x", "true", "+", "1", "ok", "accept", "accepted", "allowed"}
 NO = {"no", "n", "nē", "ne", "false", "-", "0", "not", "nope", "rejected", "not allowed"}
 YESNO = ("casino", "loan", "crypto", "adult", "sponsored_tag")
-FILLABLE = ("email", "price", "special_price", "casino", "loan", "crypto", "adult",
+FILLABLE = ("email", "price", "special_price", "casino", "casino_nolicense", "loan", "crypto", "adult",
             "sponsored_tag", "link_insertion", "requirements", "dr", "traffic", "country",
             "language")
 
@@ -116,6 +121,8 @@ def _clean(field, raw):
     if not text:
         return ""
     low = text.lower()
+    if field == "casino_nolicense":
+        return licence.clean(text)
     if field == "email":
         m = finder.EMAIL_RE.search(text)
         return m.group(0).lower() if m else ""
@@ -252,6 +259,8 @@ def _run(filename, raw, dry, campaign_id=None, refresh=False):
             all_emails = list(dict.fromkeys(e.lower() for e in finder.EMAIL_RE.findall(raw_emails)))
             values["country"] = values["country"] or sheet_country or countries.from_domain(domain)
             values["language"] = values["language"] if len(values["language"]) <= 5 else ""
+            if not values.get("casino_nolicense") and values.get("requirements"):
+                values["casino_nolicense"] = licence.from_text(values["requirements"])
             values = {k: v for k, v in values.items() if v}
             current = known.get(domain)
             if current is None:

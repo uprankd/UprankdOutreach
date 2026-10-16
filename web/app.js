@@ -31,6 +31,8 @@ const I = {
   more: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>',
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.8v2.9h2.9M8 5v3.2l2.2 1.4"/>',
   note: '<path d="M3 3.5h10v7H8.5L5.5 13v-2.5H3z"/><path d="M5.5 6.25h5M5.5 8.25h3"/>',
+  chev: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
+  star: '<path d="M8 2.2l1.75 3.6 3.95.55-2.87 2.77.7 3.93L8 11.2l-3.53 1.85.7-3.93L2.3 6.35l3.95-.55z"/>',
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   inbox: '<path d="M2 9.5 3.6 3.7a1 1 0 0 1 1-.7h6.8a1 1 0 0 1 1 .7L14 9.5V13H2V9.5Zm0 0h3.5l1 1.5h3l1-1.5H14"/>',
@@ -90,6 +92,23 @@ function renderNav() {
   $("#nav0").innerHTML = NAV0.map(item).join("");
   $("#nav1").innerHTML = NAV1.map(item).join("");
   $("#nav2").innerHTML = NAV2.map(item).join("");
+  renderStars();
+}
+async function toggleStar(id, btn) {
+  const on = btn.getAttribute("aria-pressed") !== "true";
+  $$('[data-star="' + id + '"]').forEach((b) => { b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); b.title = on ? "Starred - click to remove" : "Star - keep it in the menu on the left"; });
+  const row = DB.rows && DB.rows.find((r) => r.id === id); if (row) row.starred = on;
+  try { const r = await api("/api/sites/" + id + "/star", { body: { on } }); S.data.starred = r.list; renderStars(); }
+  catch (e) { toast(e.message); }
+}
+function renderStars() {
+  const g = $("#starGrp"); if (!g || !S.data) return;
+  const list = S.data.starred || [];
+  g.hidden = !list.length;
+  const MAX = 8, fresh = list.filter((x) => x.new).length;
+  $("#starCount").textContent = fresh ? fresh + " new" : "";
+  $("#navStar").innerHTML = list.slice(0, MAX).map((x) => '<a href="#" data-site="' + x.id + '" class="star-item' + (x.new ? " new" : "") + (S.drawer === x.id ? '" aria-current="page' : "") + '" title="' + esc(x.domain) + (x.new ? " - new reply" : "") + '">' + fav(x.domain) + '<span class="nav-label">' + esc(x.domain) + "</span>" + (x.new ? '<span class="dot-new" aria-label="New reply"></span>' : "") + "</a>").join("") +
+    (list.length > MAX ? '<button class="linkbtn star-all" data-starall>Show all ' + list.length + "</button>" : "");
 }
 function renderCampaigns() {
   const d = S.data; if (!d) return;
@@ -277,7 +296,7 @@ async function loadSites() {
       : '<div class="empty"><strong>' + (S.q || S.filter !== "all" ? "Nothing matches" : "No websites yet") + '</strong><button class="ctl ctl--primary" data-go="add">Add websites</button></div>';
   } else {
     html = '<table class="dbt ot"><thead><tr><th class="l">Website</th><th class="l">Email</th><th class="l">Status</th><th class="l">Details</th><th>Price</th><th>Contacted</th><th>Updated</th></tr></thead><tbody>' +
-      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + noteMark(r) + "</span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + waitReason(r) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
+      rows.map((r) => '<tr data-site="' + r.id + '"><td class="site l"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + noteMark(r) + starBtn(r) + "</span></td>" + emailCell(r.email) + '<td class="l">' + pill(r.status, d.statuses) + '</td><td class="l wrap">' + waitReason(r) + "</td><td class=\"strong\">" + (numv(r.price) ? "€" + fmt(numv(r.price)) : '<span class="unk">–</span>') + '</td><td class="muted">' + day(r.sent_at) + '</td><td class="muted">' + ago(r.updated_at) + "</td></tr>").join("") + "</tbody></table>";
   }
   $("#tbl").innerHTML = html;
 }
@@ -288,16 +307,17 @@ const hue = (d) => { let h = 7; for (const c of d) h = (h * 31 + c.charCodeAt(0)
 /* The site's own icon; its letter tile shows while loading and when it has none
    (Google answers unknown sites with a 16px globe, so anything that small is skipped). */
 const fav = (d) => { const n = String(d || "").replace(/^www\./, ""); return '<span class="mono" style="--h:' + hue(n) + '" aria-hidden="true">' + esc((n[0] || "?").toUpperCase()) + '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(n) + '" onload="favOk(this)" onerror="this.remove()"></span>'; };
+const starBtn = (r) => '<button class="star' + (r.starred ? " on" : "") + '" data-star="' + r.id + '" aria-pressed="' + (r.starred ? "true" : "false") + '" title="' + (r.starred ? "Starred - click to remove" : "Star - keep it in the menu on the left") + '" aria-label="Star ' + esc(r.domain) + '">' + icon("star") + "</button>";
 const noteMark = (r) => r.requirements ? '<span class="nt" tabindex="0" aria-label="Has notes" data-note="' + esc(r.requirements) + '">' + icon("note") + "</span>" : "";
 window.favOk = (img) => { if (img.naturalWidth >= 32) img.parentNode.classList.add("has"); else img.remove(); };
 const yn = (v) => { const s = String(v || ""), l = s.toLowerCase(); return l === "yes" ? '<span class="yn y">Yes</span>' : l === "no" ? '<span class="yn n">No</span>' : !s || l === "unknown" ? '<span class="unk">–</span>' : '<span class="yn">' + esc(s) + "</span>"; };
 const eur = (v) => (numv(v) ? "€" + fmt(numv(v)) : '<span class="unk">–</span>');
 const linkIns = (v) => (numv(v) ? '<span class="tp ok">€' + fmt(numv(v)) + "</span>" : /^yes$/i.test(v || "") ? '<span class="tp ok">Yes</span>' : /^no$/i.test(v || "") ? '<span class="tp no">No</span>' : v ? '<span class="tp" title="' + esc(v) + '">' + esc(String(v).slice(0, 10)) + "</span>" : '<span class="unk">–</span>');
-const DB_DEFAULT = { q: "", country: "", stage: "", niches: [], price_min: "", price_max: "", sort: "domain", dir: "asc", page: 0 };
+const DB_DEFAULT = { q: "", group: "", country: "", stage: "", niches: [], price_min: "", price_max: "", sort: "domain", dir: "asc", page: 0 };
 const DBF = JSON.parse(JSON.stringify(DB_DEFAULT));
 const DB = { rows: [], total: 0, sel: new Set(), all: false };
 const STAGE_TABS = [["", "All"], ["never", "Not contacted"], ["outreach", "In outreach"], ["priced", "With prices"], ["noprice", "No price"], ["closed", "Closed"]];
-const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"], ["builder", "Link builder contact"], ["notes", "Has notes"]];
+const NICHES = [["casino", "Casino"], ["crypto", "Crypto"], ["loan", "Loans"], ["adult", "Adult"], ["link", "Link insertion"], ["unmarked", "Not marked sponsored"], ["nolicense", "Casino without licence"], ["builder", "Link builder contact"], ["notes", "Has notes"], ["starred", "Starred"]];
 const COLS = [["domain", "Website", "l site"], ["country", "Country", "l"], ["email", "Email", "l"], ["price", "Our price"], [null, "Topics", "l", "Casino, loans, crypto and adult topics the site accepts, with what each costs"], [null, "Uprankd", "", "Our selling price - see Settings → Pricing"], [null, "Uprankd special", "", "Our selling price for special topics"], ["link", "Link ins.", "", "Link insertion into an existing article"], ["sponsored", "Marked", "", "Are articles marked as sponsored?"], ["dr", "DR"], ["traffic", "Traffic"], ["status", "Status", "l"]];
 /* Our selling price: cost × multiplier, rounded up, never below the minimum (Settings → Pricing). */
 const UP = (v) => {
@@ -316,7 +336,7 @@ function topicPrice(r, k) {
   if (l === "yes") { const sp = numv(r.special_price), p = numv(r.price); return sp ? { p: sp } : p ? { p, base: true } : { yes: true }; }
   return v ? { text: v } : {};
 }
-const FIELD = { email: "Email", price: "Price", special_price: "Special topics price", casino: "Casino", loan: "Loans", crypto: "Crypto", adult: "Adult", sponsored_tag: "Marked sponsored", link_insertion: "Link insertion", requirements: "Requirements", country: "Country", dr: "DR", traffic: "Traffic", status: "Status" };
+const FIELD = { email: "Email", price: "Price", special_price: "Special topics price", casino: "Casino", casino_nolicense: "Casino without licence", campaign_id: "Outreach group", loan: "Loans", crypto: "Crypto", adult: "Adult", sponsored_tag: "Marked sponsored", link_insertion: "Link insertion", requirements: "Requirements", country: "Country", dr: "DR", traffic: "Traffic", status: "Status" };
 function changeVal(field, v) {
   if (v == null || String(v).trim() === "") return '<span class="unk">empty</span>';
   if (field === "status") return esc((S.statuses || {})[v] || v);
@@ -331,8 +351,10 @@ function topicsCell(r) {
   for (const [k, label] of TOPICS) {
     const t = topicPrice(r, k);
     if (t.no) { known++; continue; }
-    if (t.p) { known++; const x = base && Math.abs(t.p - base) > 0.5 ? " · ×" + (t.p / base).toFixed(1) + " the normal price" : ""; parts.push('<span class="tc" title="' + label + ": €" + fmt(t.p) + x + '">' + label + " <b>€" + fmt(t.p) + "</b></span>"); }
-    else if (t.yes) { known++; parts.push('<span class="tc">' + label + "</span>"); }
+    const nl = k === "casino" && r.casino_nolicense === "Yes";
+    const nlTip = nl ? " · accepts casinos without a gambling licence" : "";
+    if (t.p) { known++; const x = base && Math.abs(t.p - base) > 0.5 ? " · ×" + (t.p / base).toFixed(1) + " the normal price" : ""; parts.push('<span class="tc' + (nl ? " nolic" : "") + '" title="' + label + ": €" + fmt(t.p) + x + nlTip + '">' + label + " <b>€" + fmt(t.p) + "</b>" + (nl ? '<i>no licence</i>' : "") + "</span>"); }
+    else if (t.yes) { known++; parts.push('<span class="tc' + (nl ? " nolic" : "") + '"' + (nl ? ' title="Casino' + nlTip + '"' : "") + ">" + label + (nl ? '<i>no licence</i>' : "") + "</span>"); }
   }
   return parts.length ? '<span class="tcs">' + parts.join("") + "</span>" : known ? '<span class="unk">None</span>' : '<span class="unk">–</span>';
 }
@@ -352,7 +374,7 @@ const tagCell = (v) => { const l = String(v || "").toLowerCase(); return l === "
 const numCell = (v) => { const n = parseFloat(String(v || "").replace(/,/g, "")); return isFinite(n) && String(v).trim() !== "" ? fmt(Math.round(n * 10) / 10) : '<span class="unk">–</span>'; };
 function dbQuery(extra) {
   const p = new URLSearchParams();
-  ["q", "country", "stage", "price_min", "price_max", "sort", "dir", "page"].forEach((k) => { if (DBF[k] !== "" && DBF[k] != null) p.set(k, DBF[k]); });
+  ["q", "group", "country", "stage", "price_min", "price_max", "sort", "dir", "page"].forEach((k) => { if (DBF[k] !== "" && DBF[k] != null) p.set(k, DBF[k]); });
   if (DBF.niches.length) p.set("niches", DBF.niches.join(","));
   p.set("per", 2000);
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
@@ -364,20 +386,20 @@ function dbShell() {
   $("#view").innerHTML =
     '<section class="stats" id="dbMetrics" style="margin-bottom:30px"></section>' +
     '<section><div class="toolbar"><input class="search" id="dbq" placeholder="Search" value="' + esc(DBF.q) + '">' +
-    '<select class="ctl" id="dbCountry"></select><div class="filter-tabs" id="dbStage"></div></div>' +
+    '<select class="ctl" id="dbCountry"></select><select class="ctl" id="dbGroup" title="Websites in one outreach group"></select><div class="filter-tabs" id="dbStage"></div><span style="flex:1"></span>' + '<label class="ctl" title="Import an Excel or CSV file">' + icon("upload") + 'Import<input type="file" id="dbFile" accept=".xlsx,.xlsm,.csv,.txt" hidden></label><button class="ctl" data-export>' + icon("download") + "Export</button>" + "</div>" +
     '<div class="toolbar chips" id="dbChips"></div><div class="tablewrap" id="dbTbl"></div><div class="pager" id="dbPager"></div></section>' +
     '<div class="bulkbar" id="bulk"></div>';
   $("#dbq").oninput = (e) => { DBF.q = e.target.value; DBF.page = 0; clearTimeout(dbShell._t); dbShell._t = setTimeout(() => { saveDBF(); loadDB(); }, 220); };
   $("#dbTbl").onscroll = edgeHints;
   $("#dbCountry").onchange = (e) => { DBF.country = e.target.value; DBF.page = 0; saveDBF(); loadDB(); };
+  $("#dbFile").onchange = (e) => { if (e.target.files[0]) importDB(e.target.files[0]); e.target.value = ""; };
+  $("#dbGroup").onchange = (e) => { DBF.group = e.target.value; DBF.page = 0; saveDBF(); renderChips(); loadDB(); };
   renderChips();
 }
 function renderChips() {
   $("#dbChips").innerHTML = NICHES.map(([k, l]) => '<button class="chip' + (DBF.niches.includes(k) ? " is-on" : "") + '" data-niche="' + k + '">' + l + "</button>").join("") +
     '<span class="chip-sep"></span><span class="label" style="margin:0 2px 0 4px">Price €</span><input class="mini" id="pmin" inputmode="numeric" placeholder="min" value="' + esc(DBF.price_min) + '"><span class="dim">–</span><input class="mini" id="pmax" inputmode="numeric" placeholder="max" value="' + esc(DBF.price_max) + '">' +
-    (DBF.niches.length || DBF.price_min || DBF.price_max || DBF.country || DBF.stage || DBF.q ? '<button class="linkbtn" data-dbclear>Clear filters</button>' : "") +
-    '<span style="flex:1"></span><label class="ctl" title="Import an Excel or CSV file">' + icon("upload") + 'Import<input type="file" id="dbFile" accept=".xlsx,.xlsm,.csv,.txt" hidden></label><button class="ctl" data-export>' + icon("download") + "Export</button>";
-  $("#dbFile").onchange = (e) => { if (e.target.files[0]) importDB(e.target.files[0]); e.target.value = ""; };
+    (DBF.niches.length || DBF.price_min || DBF.price_max || DBF.country || DBF.group || DBF.stage || DBF.q ? '<button class="linkbtn" data-dbclear>Clear filters</button>' : "");
   const set = (k) => (e) => { DBF[k] = e.target.value.replace(/[^\d.]/g, ""); DBF.page = 0; clearTimeout(renderChips._t); renderChips._t = setTimeout(() => { saveDBF(); loadDB(); }, 350); };
   $("#pmin").oninput = set("price_min"); $("#pmax").oninput = set("price_max");
 }
@@ -392,10 +414,12 @@ async function loadDB() {
     .map(([l, v, c]) => '<div class="stat"><div class="label">' + l + '</div><div class="fig">' + v + '</div><div class="delta">' + c + "</div></div>").join("");
   const cs = d.countries;
   $("#dbCountry").innerHTML = '<option value="">All countries</option>' + cs.map((c) => '<option value="' + esc(c.country) + '"' + (DBF.country === c.country ? " selected" : "") + ">" + esc(c.country) + " (" + c.n + ")</option>").join("");
+  const camps = (S.data && S.data.campaigns) || [];
+  $("#dbGroup").innerHTML = '<option value="">All outreach groups</option>' + camps.map((c) => '<option value="' + c.id + '"' + (String(DBF.group) === String(c.id) ? " selected" : "") + ">" + esc(c.name) + " (" + fmt(c.n) + ")</option>").join("");
   $("#dbStage").innerHTML = STAGE_TABS.map(([k, l]) => '<button data-stage="' + k + '" class="' + (DBF.stage === k ? "is-on" : "") + '">' + l + "</button>").join("");
   DB.exportWhat = fmt(sm.total) + " website" + (sm.total === 1 ? "" : "s") + " matching the filters";
   if (!d.rows.length) {
-    $("#dbTbl").innerHTML = d.total || DBF.q || DBF.country || DBF.stage || DBF.niches.length || DBF.price_min || DBF.price_max
+    $("#dbTbl").innerHTML = d.total || DBF.q || DBF.country || DBF.group || DBF.stage || DBF.niches.length || DBF.price_min || DBF.price_max
       ? '<div class="empty"><strong>Nothing matches</strong><p>Try fewer filters.</p><button class="ctl" data-dbclear>Clear filters</button></div>'
       : '<div class="empty"><strong>Your website database is empty</strong><p>Import the Excel file you use today - every sheet is read, and the columns are found by their names. Websites Almo contacts are added here automatically.</p><label class="ctl ctl--primary" style="margin-top:10px">' + icon("upload") + 'Import Excel or CSV<input type="file" accept=".xlsx,.xlsm,.csv,.txt" hidden onchange="window.__importDB(this)"></label></div>';
     $("#dbPager").innerHTML = ""; renderBulk(); return;
@@ -407,7 +431,7 @@ async function loadDB() {
   const keepLeft = $("#dbTbl").scrollLeft;
   $("#dbTbl").innerHTML = '<table class="dbt fixed">' + colgroup + '<thead><tr><th class="cb sticky"><input type="checkbox" id="selAll"' + (allOn ? " checked" : "") + ' aria-label="Select all"></th>' + COLS.map(th).join("") + "</tr></thead><tbody>" +
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
-      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + noteMark(r) + "</span></td>" +
+      '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + noteMark(r) + starBtn(r) + "</span></td>" +
       '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email, r) +
       '<td class="num muted">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td><td class=\"num\">" + upCell(r.price) + "</td><td class=\"num\">" + upCell(r.special_price) + "</td>" +
       "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
@@ -427,12 +451,13 @@ function renderBulk() {
   const n = DB.all ? DB.total : DB.sel.size;
   if (!n) { b.classList.remove("on"); return; }
   b.innerHTML = "<b>" + fmt(n) + "</b>&nbsp;selected" + (!DB.all && DB.sel.size >= DB.rows.length && DB.total > DB.rows.length ? '<button class="linkbtn" data-bulk="all">Select all ' + fmt(DB.total) + "</button>" : "") +
-    '<span class="sep"></span><button class="ctl ctl--tiny ctl--primary" data-bulk="ask" title="Send your pitch to the ones Almo hasn\'t written to yet">Ask for prices</button><button class="ctl ctl--tiny" data-bulk="find_direct" title="Look on each website for its own address">Find own contacts</button><button class="ctl ctl--tiny" data-bulk="export">Export</button><button class="ctl ctl--tiny ctl--danger" data-bulk="remove">Remove</button><button class="ctl ctl--tiny ctl--icon" data-bulk="clear" title="Clear selection">' + icon("close") + "</button>";
+    '<span class="sep"></span><span class="bmenu"><button class="ctl ctl--tiny ctl--primary" data-bulk="outreach" aria-haspopup="true" title="Put them in an outreach group - Almo writes to the ones it hasn\'t contacted yet">Add to outreach' + icon("chev", "chev") + '</button><span class="menu-list" id="bulkCamps">' + ((S.data && S.data.campaigns) || []).map((c) => '<button data-bulkcamp="' + c.id + '"><span class="client-mark">' + esc(c.name.slice(0, 1).toUpperCase()) + '</span><span class="cname">' + esc(c.name) + '</span><span class="n">' + fmt(c.n) + "</span></button>").join("") + "</span></span>" + '<button class="ctl ctl--tiny" data-bulk="find_direct" title="Look on each website for its own address">Find own contacts</button><button class="ctl ctl--tiny" data-bulk="export">Export</button><button class="ctl ctl--tiny ctl--danger" data-bulk="remove">Remove</button><button class="ctl ctl--tiny ctl--icon" data-bulk="clear" title="Clear selection">' + icon("close") + "</button>";
   b.classList.add("on");
 }
-async function bulkDB(action) {
+async function bulkDB(action, value) {
   if (action === "clear") { DB.sel.clear(); DB.all = false; loadDB(); return; }
   if (action === "all") { DB.all = true; renderBulk(); return; }
+  if (action === "outreach" && value == null) { $("#bulk .bmenu").classList.toggle("open"); return; }
   const body = DB.all ? { all: true, filters: Object.fromEntries(new URLSearchParams(dbQuery())) } : { ids: [...DB.sel] };
   if (action === "export") {
     openExport(DB.all ? "db=1&" + dbQuery() : "ids=" + [...DB.sel].join(","), fmt(DB.all ? DB.total : DB.sel.size) + " selected websites");
@@ -441,9 +466,12 @@ async function bulkDB(action) {
   const n = DB.all ? DB.total : DB.sel.size;
   if (action === "remove" && !confirm("Remove " + n + " website" + (n === 1 ? "" : "s") + " from the database?")) return;
   body.action = action;
+  if (value != null) body.value = value;
   try {
     const r = await api("/api/db/bulk", { body });
-    toast(action === "find_direct" ? (r.count ? "Looking for the own contact of " + r.count + " website" + (r.count === 1 ? "" : "s") : "Already being checked") : action === "ask" ? (r.count ? r.count + " website" + (r.count === 1 ? "" : "s") + " queued - Almo will write to them" : "All of those were already contacted") : r.count + " removed");
+    const cn = action === "outreach" ? ((S.data.campaigns || []).find((c) => c.id === Number(value)) || {}).name : "";
+    if (action === "outreach") toast(r.moved + " website" + (r.moved === 1 ? "" : "s") + " added to " + cn + (r.count ? " - Almo will write to " + (r.count === r.moved ? "them" : r.count + " not contacted yet") : " - all were already contacted"), 5000);
+    else toast(action === "find_direct" ? (r.count ? "Looking for the own contact of " + r.count + " website" + (r.count === 1 ? "" : "s") : "Already being checked") : action === "ask" ? (r.count ? r.count + " website" + (r.count === 1 ? "" : "s") + " queued - Almo will write to them" : "All of those were already contacted") : r.count + " removed");
     DB.sel.clear(); DB.all = false; loadDB(); refresh();
   } catch (e) { toast(e.message); }
 }
@@ -489,6 +517,8 @@ async function openSite(id, quiet) {
   S.drawerKey = key;
   const keepScroll = quiet && S.drawer === id && $("#drawer .drawer-body") ? $("#drawer .drawer-body").scrollTop : 0;
   S.drawer = id;
+  const seen = (S.data && S.data.starred || []).find((x) => x.id === id);
+  if (seen && seen.new) { seen.new = false; renderStars(); }
   const s = d.site, dr = $("#drawer"), edit = !!S.drawerEdit;
   const has = (v) => v && !/^unknown$/i.test(v);
   let primary = "";
@@ -503,15 +533,16 @@ async function openSite(id, quiet) {
   const kv = (label, value) => '<div class="kv-row"><span class="k">' + label + '</span><span class="v">' + value + "</span></div>";
   const facts = !anyTerms ? '<p class="small notes-empty">No terms yet - they fill in when the website replies, or add them with Edit.</p>'
     : '<div class="kv-grid"><div><div class="kv-h">Prices</div>' + kv("Article", eur(s.price)) + kv("Uprankd price", upCell(s.price)) + kv("Special topics", eur(s.special_price)) + kv("Uprankd special", upCell(s.special_price)) + kv("Link insertion", linkIns(s.link_insertion)) + kv("Marked sponsored", tagCell(s.sponsored_tag)) +
-      '</div><div><div class="kv-h">Topics</div>' + TOPICS.map(([k, l]) => kv(l, topicCell(s, k))).join("") + "</div></div>";
+      '</div><div><div class="kv-h">Topics</div>' + TOPICS.map(([k, l]) => kv(l, topicCell(s, k)) + (k === "casino" ? kv("Without licence", s.casino_nolicense === "Yes" ? '<span class="tp nolic">Yes</span>' : s.casino_nolicense === "No" ? '<span class="tp no">No - licence needed</span>' : '<span class="unk">–</span>') : "")).join("") + "</div></div>";
   const topics = "";
   const inp = (label, key, ph) => '<div class="fld"><span class="label">' + label + '</span><input data-f="' + key + '" value="' + esc(has(s[key]) ? s[key] : "") + '" placeholder="' + (ph || "–") + '"></div>';
-  const editForm = '<div class="form-grid compact">' + inp("Price €", "price", "€") + inp("Special topics €", "special_price", "€") + inp("Link insertion", "link_insertion", "Yes, No or €") + inp("Sponsored tag", "sponsored_tag", "Yes or No") + inp("Casino", "casino", "Yes, No or €") + inp("Loans", "loan", "Yes, No or €") + inp("Crypto", "crypto", "Yes, No or €") + inp("Adult", "adult", "Yes, No or €") + inp("Country", "country") + inp("DR", "dr") + inp("Traffic", "traffic") +
+  const editForm = '<div class="form-grid compact">' + inp("Price €", "price", "€") + inp("Special topics €", "special_price", "€") + inp("Link insertion", "link_insertion", "Yes, No or €") + inp("Sponsored tag", "sponsored_tag", "Yes or No") + inp("Casino", "casino", "Yes, No or €") + inp("Casino without licence", "casino_nolicense", "Yes or No") + inp("Loans", "loan", "Yes, No or €") + inp("Crypto", "crypto", "Yes, No or €") + inp("Adult", "adult", "Yes, No or €") + inp("Country", "country") + inp("DR", "dr") + inp("Traffic", "traffic") +
     '<div class="fld full"><span class="label">Notes</span><textarea data-f="requirements" style="min-height:80px">' + esc(s.requirements) + '</textarea></div></div><div style="display:flex;gap:8px;margin-top:14px"><button class="ctl ctl--primary" data-sa="save">Save</button><button class="ctl" data-sa="cancel_edit">Cancel</button></div>';
   const when = (ts) => new Date(ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   const lastIn = d.thread.filter((m) => m.direction === "in" && m.kind === "reply").slice(-1)[0];
   const thread = d.thread.length ? d.thread.slice().reverse().map((m, i) => '<details class="msg ' + m.direction + '"' + (i === 0 || m.direction === "in" ? " open" : "") + '><summary class="mh"><span><b>' + (m.direction === "out" ? "You" : esc(m.from_addr)) + '</b><span class="tag">' + esc({ pitch: "Pitch", reply: "Reply", followup: "Follow-up", nudge: "Reminder", bounce: "Bounce" }[m.kind] || m.kind) + "</span>" + (m.test ? '<span class="tag">Test</span>' : "") + "</span><span>" + new Date(m.ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + '</span></summary><div class="small" style="margin:8px 0 6px">' + esc(m.subject) + '</div><div class="mb">' + esc(m.body) + "</div></details>").join("") : '<p class="small">Almo hasn\'t written to this website yet.</p>';
-  dr.innerHTML = '<div class="drawer-head"><div class="grow"><h2 class="pagetitle dtitle">' + fav(s.domain) + esc(s.domain) + '</h2><div class="dsub">' + [pill(s.status, d.statuses), s.country ? esc(s.country) : "", numv(s.dr) ? "DR " + esc(s.dr) : "", numv(String(s.traffic || "").replace(/,/g, "")) ? numCell(s.traffic) + " visits" : ""].filter(Boolean).map((x) => "<span>" + x + "</span>").join('<i class="sep">·</i>') + '<i class="sep">·</i><a href="https://' + esc(s.domain) + '" target="_blank" rel="noopener">Open website' + icon("ext", "ext") + '</a></div></div><button class="ctl ctl--icon" data-close-drawer aria-label="Close">' + icon("close") + "</button></div>" +
+  const camp = ((S.data && S.data.campaigns) || []).find((c) => c.id === s.campaign_id);
+  dr.innerHTML = '<div class="drawer-head"><div class="grow"><h2 class="pagetitle dtitle">' + fav(s.domain) + esc(s.domain) + '</h2><div class="dsub">' + [pill(s.status, d.statuses), s.country ? esc(s.country) : "", numv(s.dr) ? "DR " + esc(s.dr) : "", numv(String(s.traffic || "").replace(/,/g, "")) ? numCell(s.traffic) + " visits" : ""].filter(Boolean).map((x) => "<span>" + x + "</span>").join('<i class="sep">·</i>') + '<i class="sep">·</i><a href="https://' + esc(s.domain) + '" target="_blank" rel="noopener">Open website' + icon("ext", "ext") + '</a>' + (camp && !["in_db", "own"].includes(s.status) ? '<i class="sep">·</i><span>' + esc(camp.name) + "</span>" : "") + '</div></div><button class="ctl ctl--icon dstar' + (d.starred ? " on" : "") + '" data-star="' + s.id + '" aria-pressed="' + (d.starred ? "true" : "false") + '" title="' + (d.starred ? "Starred - click to remove" : "Star - keep it in the menu on the left") + '">' + icon("star") + '</button><button class="ctl ctl--icon" data-close-drawer aria-label="Close">' + icon("close") + "</button></div>" +
     '<div class="drawer-body">' + (s.note ? '<div class="banner' + (["bounced", "error"].includes(s.status) ? " bad" : s.status === "needs_you" ? " warn" : "") + '"><div class="grow">' + esc(s.note) + "</div></div>" : "") +
     (primary ? '<div class="dactions">' + primary + "</div>" : "") +
     (s.draft ? '<section><div class="head"><h3 class="sec">Follow-up ready to send</h3></div>' + (lastIn ? '<div class="msg in quoted"><div class="mh"><span><b>' + esc(lastIn.from_addr) + '</b><span class="tag">Their reply</span></span><span>' + when(lastIn.ts) + '</span></div><div class="mb">' + esc(lastIn.body) + "</div></div>" : "") +
@@ -868,7 +899,7 @@ function route() {
   if (!S.data) return;
   if (S.route === "overview") renderOverview();
   else if (["websites", "attention"].includes(S.route)) { sitesShell(); loadSites(); }
-  else if (S.route === "database") { if (S.prevRoute !== "database") resetDBF(); dbShell(); loadDB(); }
+  else if (S.route === "database") { if (S.prevRoute !== "database" && !S.keepDBF) resetDBF(); S.keepDBF = false; dbShell(); loadDB(); }
   else if (S.route === "pitch") renderPitch();
   else if (S.route === "activity") renderActivity();
   else if (S.route === "settings") { S.boxEdit = null; S.boxProv = null; renderSettings(); }
@@ -879,9 +910,11 @@ function statusToTab(s) { for (const [k, v] of Object.entries({ progress: ["queu
 
 /* ------------------------------------------------------------------ events */
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-niche],[data-stage],[data-sort],[data-page],[data-sel],#selAll,[data-bulk],[data-dbclear],[data-copy]");
-  if (!t || !t.closest("#view, #bulk, #drawer")) return;
+  const t = e.target.closest("[data-niche],[data-stage],[data-sort],[data-page],[data-sel],#selAll,[data-bulk],[data-bulkcamp],[data-dbclear],[data-copy],[data-star]");
+  if (!t || !t.closest("#view, #bulk, #drawer, #starGrp")) return;
   e.stopPropagation();
+  if (t.dataset.star) { toggleStar(Number(t.dataset.star), t); return; }
+  if (t.dataset.bulkcamp) { $("#bulk .bmenu").classList.remove("open"); bulkDB("outreach", Number(t.dataset.bulkcamp)); return; }
   if (t.dataset.copy) { copyText(t.dataset.copy).then(() => { toast("Copied " + t.dataset.copy); t.classList.add("done"); setTimeout(() => t.classList.remove("done"), 1200); }); return; }
   if (t.dataset.niche) { const k = t.dataset.niche, i = DBF.niches.indexOf(k); if (i < 0) DBF.niches.push(k); else DBF.niches.splice(i, 1); DBF.page = 0; saveDBF(); renderChips(); loadDB(); }
   else if (t.dataset.stage != null) { DBF.stage = t.dataset.stage; DBF.page = 0; saveDBF(); loadDB(); }
@@ -890,17 +923,18 @@ document.addEventListener("click", (e) => {
   else if (t.dataset.sel) { const id = Number(t.dataset.sel); DB.all = false; if (t.checked) DB.sel.add(id); else DB.sel.delete(id); t.closest("tr").classList.toggle("sel", t.checked); renderBulk(); }
   else if (t.id === "selAll") { DB.all = false; DB.rows.forEach((r) => (t.checked ? DB.sel.add(r.id) : DB.sel.delete(r.id))); loadDB(); }
   else if (t.dataset.bulk) bulkDB(t.dataset.bulk);
-  else if (t.hasAttribute("data-dbclear")) { Object.assign(DBF, { q: "", country: "", stage: "", niches: [], price_min: "", price_max: "", page: 0 }); saveDBF(); dbShell(); loadDB(); }
+  else if (t.hasAttribute("data-dbclear")) { Object.assign(DBF, { q: "", group: "", country: "", stage: "", niches: [], price_min: "", price_max: "", page: 0 }); saveDBF(); dbShell(); loadDB(); }
 }, true);
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { const q = $("#dbq") || $("#q"); if (q) { e.preventDefault(); q.focus(); } }
 });
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-go],[data-site],[data-f],[data-act],[data-sa],[data-close],[data-close-drawer],[data-mode],[data-box],[data-bp],[data-aip],[data-sw],[data-test],[data-c]");
+  const t = e.target.closest("[data-go],[data-site],[data-starall],[data-f],[data-act],[data-sa],[data-close],[data-close-drawer],[data-mode],[data-box],[data-bp],[data-aip],[data-sw],[data-test],[data-c]");
   if (!e.target.closest(".more")) $$(".more.open").forEach((x) => x.classList.remove("open"));
   if (!t) { if (!e.target.closest("#campMenu")) $("#campMenu").classList.remove("open"); return; }
   if (t.dataset.go) { if (t.dataset.go === "add") openAdd(); else location.hash = t.dataset.go; return; }
-  if (t.dataset.site) { openSite(Number(t.dataset.site)); return; }
+  if (t.dataset.site) { if (t.tagName === "A") e.preventDefault(); openSite(Number(t.dataset.site)); return; }
+  if (t.hasAttribute("data-starall")) { e.preventDefault(); resetDBF(); DBF.niches = ["starred"]; if (S.route === "database") { dbShell(); loadDB(); } else { S.keepDBF = true; location.hash = "#/database"; } return; }
   if (t.dataset.f && t.closest("#tabs")) { S.filter = t.dataset.f; loadSites(); return; }
   if (t.dataset.c != null && t.closest("#campList")) {
     S.campaign = Number(t.dataset.c); store.set("almo-campaign", String(S.campaign)); $("#campMenu").classList.remove("open");
