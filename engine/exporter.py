@@ -43,9 +43,20 @@ def rows(campaign_id=None, only=None, ids=None):
         s["replied_on"] = datetime.fromtimestamp(s["replied_at"]).strftime("%Y-%m-%d") if s["replied_at"] else ""
         s["campaign"] = camps.get(s["campaign_id"], "")
         s["uprankd_price"] = uprankd_price(s.get("price"), cfg) or ""
-        s["uprankd_special"] = uprankd_price(s.get("special_price"), cfg) or ""
+        s["uprankd_special"] = uprankd_price(special_cost(s), cfg) or ""
         out.append(s)
     return out
+
+
+def special_cost(site):
+    """What special topics cost us: the dearest of the special price and the
+    topics' own prices, else the normal price when they take a topic at no extra."""
+    quoted = [p for p in [_positive(site.get("special_price"))] + [_positive(site.get(k)) for k, _ in TOPICS] if p]
+    if quoted:
+        return max(quoted)
+    if any(str(site.get(k) or "").strip().lower() == "yes" for k, _ in TOPICS):
+        return _positive(site.get("price"))
+    return None
 
 
 def uprankd_price(price, cfg=None):

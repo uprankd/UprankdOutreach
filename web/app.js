@@ -326,6 +326,13 @@ const UP = (v) => {
   const step = Math.max(1, Number(st.price_round) || 1), mult = Number(st.price_multiplier) || 1;
   return Math.max(Number(st.price_minimum) || 0, Math.ceil(Math.round((n * mult / step) * 1e6) / 1e6) * step);
 };
+/* What special topics cost us: the dearest of the special price and the topics'
+   own prices, else the normal price when they take a topic at no extra. */
+const specialCost = (r) => {
+  const quoted = [r.special_price, r.casino, r.loan, r.crypto, r.adult].map(numv).filter(Boolean);
+  if (quoted.length) return Math.max(...quoted);
+  return ["casino", "loan", "crypto", "adult"].some((k) => String(r[k] || "").trim().toLowerCase() === "yes") ? numv(r.price) : null;
+};
 const upCell = (v) => UP(v) ? '<span class="up">€' + fmt(UP(v)) + "</span>" : '<span class="unk">–</span>';
 const numv = (v) => { const n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) && n > 0 && /^\s*\d/.test(String(v)) ? n : null; };
 /* What a topic costs: its own price, else the special-topics price, else the normal price when they just said yes. */
@@ -433,7 +440,7 @@ async function loadDB() {
     d.rows.map((r) => '<tr data-site="' + r.id + '"' + (DB.sel.has(r.id) ? ' class="sel"' : "") + '><td class="cb sticky"><input type="checkbox" data-sel="' + r.id + '"' + (DB.sel.has(r.id) ? " checked" : "") + ' aria-label="Select"></td>' +
       '<td class="site l sticky2"><span class="sn">' + fav(r.domain) + '<span class="dn">' + esc(r.domain) + "</span>" + (r.changed ? '<span class="chg" title="' + esc(FIELD[r.changed.field] || r.changed.field) + " changed " + ago(r.changed.ts) + " by " + esc(r.changed.actor) + '"></span>' : "") + noteMark(r) + starBtn(r) + "</span></td>" +
       '<td class="l muted">' + (esc(r.country) || '<span class="unk">–</span>') + "</td>" + emailCell(r.email, r) +
-      '<td class="num muted">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td><td class=\"num\">" + upCell(r.price) + "</td><td class=\"num\">" + upCell(r.special_price) + "</td>" +
+      '<td class="num muted">' + eur(r.price) + "</td>" + "<td class=\"l\">" + topicsCell(r) + "</td><td class=\"num\">" + upCell(r.price) + "</td><td class=\"num\">" + upCell(specialCost(r)) + "</td>" +
       "<td>" + linkIns(r.link_insertion) + "</td><td>" + tagCell(r.sponsored_tag) + '</td><td class="muted">' + numCell(r.dr) + '</td><td class="muted">' + numCell(r.traffic) + '</td><td class="l">' + (r.status === "in_db" ? '<span class="unk">Not contacted</span>' : pill(r.status, d.statuses)) + "</tr>").join("") + "</tbody></table>";
   const from = d.page * d.per + 1, to = Math.min(d.total, from + d.rows.length - 1);
   $("#dbPager").innerHTML = d.total <= d.rows.length ? ('<span class="small">' + fmt(d.total) + " website" + (d.total === 1 ? "" : "s") + "</span>") : ('<span class="small">' + fmt(from) + "–" + fmt(to) + " of " + fmt(d.total) + '</span><span style="flex:1"></span><button class="ctl ctl--tiny" data-page="-1"' + (d.page ? "" : " disabled") + '>Previous</button><button class="ctl ctl--tiny" data-page="1"' + (to < d.total ? "" : " disabled") + ">Next</button>");
@@ -532,7 +539,7 @@ async function openSite(id, quiet) {
   // Terms as two short lists - what an article costs, and which topics they take.
   const kv = (label, value) => '<div class="kv-row"><span class="k">' + label + '</span><span class="v">' + value + "</span></div>";
   const facts = !anyTerms ? '<p class="small notes-empty">No terms yet - they fill in when the website replies, or add them with Edit.</p>'
-    : '<div class="kv-grid"><div><div class="kv-h">Prices</div>' + kv("Article", eur(s.price)) + kv("Uprankd price", upCell(s.price)) + kv("Special topics", eur(s.special_price)) + kv("Uprankd special", upCell(s.special_price)) + kv("Link insertion", linkIns(s.link_insertion)) + kv("Marked sponsored", tagCell(s.sponsored_tag)) +
+    : '<div class="kv-grid"><div><div class="kv-h">Prices</div>' + kv("Article", eur(s.price)) + kv("Uprankd price", upCell(s.price)) + kv("Special topics", eur(s.special_price)) + kv("Uprankd special", upCell(specialCost(s))) + kv("Link insertion", linkIns(s.link_insertion)) + kv("Marked sponsored", tagCell(s.sponsored_tag)) +
       '</div><div><div class="kv-h">Topics</div>' + TOPICS.map(([k, l]) => kv(l, topicCell(s, k)) + (k === "casino" ? kv("Without licence", s.casino_nolicense === "Yes" ? '<span class="tp nolic">Yes</span>' : s.casino_nolicense === "No" ? '<span class="tp no">No - licence needed</span>' : '<span class="unk">–</span>') : "")).join("") + "</div></div>";
   const topics = "";
   const inp = (label, key, ph) => '<div class="fld"><span class="label">' + label + '</span><input data-f="' + key + '" value="' + esc(has(s[key]) ? s[key] : "") + '" placeholder="' + (ph || "–") + '"></div>';

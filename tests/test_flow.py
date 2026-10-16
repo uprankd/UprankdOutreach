@@ -340,6 +340,10 @@ def main():
     check(exporter.uprankd_price("20") == 200 and exporter.uprankd_price("150") == 240
           and exporter.uprankd_price("133") == 220 and exporter.uprankd_price("") in (None, ""),
           "Uprankd price: 20 -> 200, 150 -> 240, 133 -> 220")
+    check(exporter.special_cost({"price": "525", "casino": "Yes"}) == 525
+          and exporter.special_cost({"price": "420", "special_price": "90", "casino": "500"}) == 500
+          and exporter.special_cost({"price": "300", "casino": "No"}) is None,
+          "Uprankd special: 'Casino: Yes' uses the normal price, the dearest topic wins")
     # Global pause: while it runs, no mailbox sends
     SITES["paused-site.lv"] = {"ok": True, "text": "news", "language": "lv", "title": "x", "emails": ["info@paused-site.lv"]}
     db.add_sites(camp, ["paused-site.lv"])
