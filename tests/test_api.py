@@ -196,6 +196,18 @@ def main():
     check(grp == ["star-one.lv", "star-two.lv"], "filter: websites in the CZ (SF2) outreach")
     check(c.post("/api/db/bulk", json={"action": "outreach", "value": 9999, "ids": [s1]}).status_code == 400,
           "an unknown group is refused")
+    # Write again from the database: only with the box ticked
+    db.update_site(s1, status="complete", sent_at=time.time() - 60 * 86400)
+    r = c.post("/api/db/bulk", json={"action": "outreach", "value": cz, "ids": [s1]}).get_json()
+    check(r["count"] == 0 and db.get_site(s1)["status"] == "complete", "without 'write again' a contacted website is left alone")
+    r = c.post("/api/db/bulk", json={"action": "outreach", "value": cz, "ids": [s1], "again": True}).get_json()
+    check(r["count"] == 1 and db.get_site(s1)["status"] == "queued", "with 'write again' it gets a new pitch")
+    db.update_site(s1, status="waiting", sent_at=time.time())
+    check(c.post("/api/sites/%d/action" % s1, json={"action": "ask_again"}).status_code == 400,
+          "panel: can't restart a conversation that's still going")
+    db.update_site(s1, status="no_reply")
+    check(c.post("/api/sites/%d/action" % s1, json={"action": "ask_again"}).status_code == 200
+          and db.get_site(s1)["status"] == "queued", "panel: 'Write again' after no reply")
     c.post("/api/sites/%d/star" % s2, json={"on": True})
     c.post("/api/sites/%d/action" % s2, json={"action": "remove"})
     check(c.get("/api/state").get_json()["starred"] == [], "a removed website leaves the starred list")

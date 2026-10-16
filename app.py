@@ -480,6 +480,11 @@ def site_action(sid):
         status = "ready" if not site["sent_at"] else site["status"]
         db.update_site(sid, email=email, emails=emails, tried=site["tried"] + [email],
                        status=status, note="")
+    elif action == "ask_again":
+        with db.tx() as conn:
+            n, _recent = db.write_again([sid], conn, recent_days=0)
+        if not n:
+            return jsonify({"error": "This conversation is still going - Almo will write when it's finished"}), 400
     elif action == "ask":
         if site["sent_at"]:
             return jsonify({"error": "Almo has already written to this website"}), 400
@@ -949,7 +954,12 @@ def db_bulk():
             n = conn.execute("UPDATE sites SET status='queued', attempts=0, next_try_at=0, note='' "
                              "WHERE id IN (%s) AND sent_at IS NULL AND status IN "
                              "('in_db','no_email','not_fit','error')" % marks, ids).rowcount
-            extra = {"moved": moved}
+            recent = 0
+            if data.get("again"):
+                # Also websites Almo wrote to before: a fresh pitch from this group.
+                again, recent = db.write_again(ids, conn)
+                n += again
+            extra = {"moved": moved, "recent": recent}
         elif action == "country":
             n = conn.execute("UPDATE sites SET country=? WHERE id IN (%s)" % marks,
                              [data.get("value") or ""] + ids).rowcount

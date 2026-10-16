@@ -458,7 +458,7 @@ function renderBulk() {
   const n = DB.all ? DB.total : DB.sel.size;
   if (!n) { b.classList.remove("on"); return; }
   b.innerHTML = "<b>" + fmt(n) + "</b>&nbsp;selected" + (!DB.all && DB.sel.size >= DB.rows.length && DB.total > DB.rows.length ? '<button class="linkbtn" data-bulk="all">Select all ' + fmt(DB.total) + "</button>" : "") +
-    '<span class="sep"></span><span class="bmenu"><button class="ctl ctl--tiny ctl--primary" data-bulk="outreach" aria-haspopup="true" title="Put them in an outreach group - Almo writes to the ones it hasn\'t contacted yet">Add to outreach' + icon("chev", "chev") + '</button><span class="menu-list" id="bulkCamps">' + ((S.data && S.data.campaigns) || []).map((c) => '<button data-bulkcamp="' + c.id + '"><span class="client-mark">' + esc(c.name.slice(0, 1).toUpperCase()) + '</span><span class="cname">' + esc(c.name) + '</span><span class="n">' + fmt(c.n) + "</span></button>").join("") + "</span></span>" + '<button class="ctl ctl--tiny" data-bulk="find_direct" title="Look on each website for its own address">Find own contacts</button><button class="ctl ctl--tiny" data-bulk="export">Export</button><button class="ctl ctl--tiny ctl--danger" data-bulk="remove">Remove</button><button class="ctl ctl--tiny ctl--icon" data-bulk="clear" title="Clear selection">' + icon("close") + "</button>";
+    '<span class="sep"></span><span class="bmenu"><button class="ctl ctl--tiny ctl--primary" data-bulk="outreach" aria-haspopup="true" title="Put them in an outreach group - Almo writes to the ones it hasn\'t contacted yet">Add to outreach' + icon("chev", "chev") + '</button><span class="menu-list" id="bulkCamps"><label class="again"><input type="checkbox" id="bulkAgain"' + (DB.again ? " checked" : "") + '><span><b>Also write again</b> to websites Almo already contacted<small>Skips conversations still going and websites written to in the last 30 days</small></span></label><span class="mhead">Outreach group</span>' + ((S.data && S.data.campaigns) || []).map((c) => '<button data-bulkcamp="' + c.id + '"><span class="client-mark">' + esc(c.name.slice(0, 1).toUpperCase()) + '</span><span class="cname">' + esc(c.name) + '</span><span class="n">' + fmt(c.n) + "</span></button>").join("") + "</span></span>" + '<button class="ctl ctl--tiny" data-bulk="find_direct" title="Look on each website for its own address">Find own contacts</button><button class="ctl ctl--tiny" data-bulk="export">Export</button><button class="ctl ctl--tiny ctl--danger" data-bulk="remove">Remove</button><button class="ctl ctl--tiny ctl--icon" data-bulk="clear" title="Clear selection">' + icon("close") + "</button>";
   b.classList.add("on");
 }
 async function bulkDB(action, value) {
@@ -474,10 +474,14 @@ async function bulkDB(action, value) {
   if (action === "remove" && !confirm("Remove " + n + " website" + (n === 1 ? "" : "s") + " from the database?")) return;
   body.action = action;
   if (value != null) body.value = value;
+  if (action === "outreach") {
+    body.again = !!DB.again;
+    if (DB.again && n > 50 && !confirm("Write again to the websites Almo already contacted? Up to " + fmt(n) + " websites may get a new pitch.")) return;
+  }
   try {
     const r = await api("/api/db/bulk", { body });
     const cn = action === "outreach" ? ((S.data.campaigns || []).find((c) => c.id === Number(value)) || {}).name : "";
-    if (action === "outreach") toast(r.moved + " website" + (r.moved === 1 ? "" : "s") + " added to " + cn + (r.count ? " - Almo will write to " + (r.count === r.moved ? "them" : r.count + " not contacted yet") : " - all were already contacted"), 5000);
+    if (action === "outreach") toast(r.moved + " website" + (r.moved === 1 ? "" : "s") + " added to " + cn + (r.count ? " - Almo will write to " + (r.count === r.moved ? "them" : fmt(r.count)) : DB.again ? " - nobody to write to right now" : " - all were already contacted") + (r.recent ? " · " + fmt(r.recent) + " written to in the last 30 days, skipped" : ""), 6000);
     else toast(action === "find_direct" ? (r.count ? "Looking for the own contact of " + r.count + " website" + (r.count === 1 ? "" : "s") : "Already being checked") : action === "ask" ? (r.count ? r.count + " website" + (r.count === 1 ? "" : "s") + " queued - Almo will write to them" : "All of those were already contacted") : r.count + " removed");
     DB.sel.clear(); DB.all = false; loadDB(); refresh();
   } catch (e) { toast(e.message); }
@@ -531,6 +535,7 @@ async function openSite(id, quiet) {
   let primary = "";
   if (s.status === "in_db") primary = '<button class="ctl ctl--primary" data-sa="ask">' + icon("outreach") + "Ask for prices</button>";
   else if (["error", "no_email", "bounced"].includes(s.status)) primary = '<button class="ctl ctl--primary" data-sa="retry">Check again</button>';
+  else if (s.sent_at && ["complete", "declined", "no_reply"].includes(s.status)) primary = '<button class="ctl" data-sa="ask_again" title="Send a fresh pitch from this website\'s outreach group">' + icon("outreach") + "Write again</button>";
   else if (s.status === "not_fit") primary = '<button class="ctl ctl--primary" data-sa="send_now">Pitch anyway</button>';
   else if (s.replied_at && !["complete", "declined"].includes(s.status) && !s.draft) primary = '<button class="ctl ctl--primary" data-sa="complete">Mark as done</button><button class="ctl" data-sa="reread">Read reply again</button>';
   const fact = (label, v, cls) => '<div class="fact"><div class="label">' + label + '</div><div class="fv ' + (cls || "") + '">' + v + "</div></div>";
@@ -572,6 +577,7 @@ function closeDrawer() {
   if (!$("#addModal").classList.contains("open")) $("#scrim").classList.remove("open");
 }
 async function siteAction(action) {
+  if (action === "ask_again" && !confirm("Send a new pitch to this website? The earlier emails stay in its history.")) return;
   const id = S.drawer, dr = $("#drawer");
   if (action === "edit" || action === "cancel_edit") { S.drawerEdit = action === "edit"; S.drawerEditing = S.drawerEdit; openSite(id, true); return; }
   const body = { action };
@@ -581,7 +587,7 @@ async function siteAction(action) {
   if (action === "set_email") body.email = $("#emailIn").value;
   try {
     await api("/api/sites/" + id + "/action", { body });
-    toast({ save: "Saved", send_draft: "Follow-up sent", remove: "Removed", retry: "Checking again", complete: "Marked as done", reread: "Reading the reply again…", set_email: "Email updated", send_now: "Queued for sending", find_direct: "Looking for the site's own contact…", ask: "Queued - Almo will write to them" }[action] || "Done");
+    toast({ save: "Saved", send_draft: "Follow-up sent", remove: "Removed", retry: "Checking again", complete: "Marked as done", reread: "Reading the reply again…", set_email: "Email updated", send_now: "Queued for sending", find_direct: "Looking for the site's own contact…", ask: "Queued - Almo will write to them", ask_again: "Queued - Almo will send a new pitch" }[action] || "Done");
     S.drawerEditing = false; S.drawerEdit = false;
     if (action === "remove") closeDrawer(); else openSite(id, true);
     if (S.route === "database") loadDB();
@@ -921,6 +927,7 @@ document.addEventListener("click", (e) => {
   if (!t || !t.closest("#view, #bulk, #drawer, #starGrp")) return;
   e.stopPropagation();
   if (t.dataset.star) { toggleStar(Number(t.dataset.star), t); return; }
+  if (t.dataset.bulkcamp) { DB.again = !!($("#bulkAgain") && $("#bulkAgain").checked); }
   if (t.dataset.bulkcamp) { $("#bulk .bmenu").classList.remove("open"); bulkDB("outreach", Number(t.dataset.bulkcamp)); return; }
   if (t.dataset.copy) { copyText(t.dataset.copy).then(() => { toast("Copied " + t.dataset.copy); t.classList.add("done"); setTimeout(() => t.classList.remove("done"), 1200); }); return; }
   if (t.dataset.niche) { const k = t.dataset.niche, i = DBF.niches.indexOf(k); if (i < 0) DBF.niches.push(k); else DBF.niches.splice(i, 1); DBF.page = 0; saveDBF(); renderChips(); loadDB(); }

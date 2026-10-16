@@ -357,6 +357,29 @@ def main():
     check(not any(m["To"] == "info@paused-site.lv" for m in SENT), "nothing is sent during the global pause")
     run(w, 4)
     check(any(m["To"] == "info@paused-site.lv" for m in SENT), "after the pause it sends")
+    # Write again: a finished conversation gets a fresh pitch, a recent one doesn't
+    SITES["again-site.lv"] = {"ok": True, "text": "news", "language": "lv", "title": "x", "emails": ["info@again-site.lv"]}
+    db.add_sites(camp, ["again-site.lv"])
+    run(w, 4)
+    ag = status("again-site.lv")
+    first = len([m for m in SENT if m["To"] == "info@again-site.lv"])
+    check(ag["status"] == "waiting" and first == 1, "first pitch sent")
+    db.update_site(ag["id"], status="complete", sent_at=time.time() - 40 * 86400, nudges=1)
+    with db.tx() as conn:
+        n, recent = db.write_again([ag["id"]], conn)
+    check(n == 1 and recent == 0 and status("again-site.lv")["status"] == "queued", "a conversation from 40 days ago is queued again")
+    run(w, 4)
+    ag = status("again-site.lv")
+    check(len([m for m in SENT if m["To"] == "info@again-site.lv"]) == 2 and ag["status"] == "waiting"
+          and ag["nudges"] == 0 and ag["sent_at"] > time.time() - 60, "the new pitch goes out, reminders start over")
+    db.update_site(ag["id"], status="complete")
+    with db.tx() as conn:
+        n, recent = db.write_again([ag["id"]], conn)
+    check(n == 0 and recent == 1, "written to today: skipped, and counted as skipped")
+    db.update_site(ag["id"], status="waiting")
+    with db.tx() as conn:
+        n, recent = db.write_again([ag["id"]], conn, recent_days=0)
+    check(n == 0, "a conversation still going is never restarted")
     st = settings.load()
     check(st["gap_min"] == 240 and st["gap_max"] == 600 and st["global_gap_min"] == 30, "new pause defaults")
     print("\nAll checks passed.")

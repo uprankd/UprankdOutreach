@@ -575,3 +575,29 @@ def starred(user_key):
         r["new"] = bool(r["last_in"] and r["last_in"] > r["seen_at"])
     rows.sort(key=lambda r: (not r["new"], -(r["last_in"] or r["starred_at"])))
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# Writing again to websites Almo already contacted
+# --------------------------------------------------------------------------- #
+# Finished conversations only - never one that's still going, and never a site
+# that's ours or that the database marked closed.
+AGAIN_STATUSES = ("in_db", "complete", "declined", "no_reply", "no_email", "not_fit", "error")
+AGAIN_OK = ("status IN ('%s') AND NOT (source='import' AND sent_at IS NULL AND status='declined')"
+            % "','".join(AGAIN_STATUSES))
+AGAIN_DAYS = 30
+
+
+def write_again(ids, conn, recent_days=AGAIN_DAYS):
+    """Queue these websites for a fresh pitch. Returns (queued, skipped_recent)."""
+    if not ids:
+        return 0, 0
+    marks = ",".join("?" * len(ids))
+    cutoff = time.time() - recent_days * 86400
+    recent = conn.execute("SELECT COUNT(*) AS n FROM sites WHERE id IN (%s) AND %s AND sent_at>=?"
+                          % (marks, AGAIN_OK), list(ids) + [cutoff]).fetchone()
+    n = conn.execute("UPDATE sites SET status='queued', attempts=0, next_try_at=0, note='', nudges=0, "
+                     "followups=0, pitch_id=NULL, draft='', updated_at=? WHERE id IN (%s) AND %s "
+                     "AND (sent_at IS NULL OR sent_at<?)" % (marks, AGAIN_OK),
+                     [time.time()] + list(ids) + [cutoff]).rowcount
+    return n, dict(recent)["n"]
